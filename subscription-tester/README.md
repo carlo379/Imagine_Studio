@@ -43,7 +43,7 @@ From the repository root on Ubuntu/Debian:
 
 ```sh
 sudo apt-get update
-sudo apt-get install -y build-essential pkg-config nasm curl xz-utils libx264-dev libass-dev libfreetype6-dev libharfbuzz-dev libfontconfig1-dev zlib1g-dev fonts-dejavu-core
+sudo apt-get install -y build-essential pkg-config nasm curl xz-utils libx264-dev libmp3lame-dev libass-dev libfreetype6-dev libharfbuzz-dev libfontconfig1-dev zlib1g-dev fonts-dejavu-core
 sh scripts/install_linux_ffmpeg.sh "$HOME/.local/opt/imagine-ffmpeg"
 export PATH="$HOME/.local/opt/imagine-ffmpeg/bin:$PATH"
 python3 subscription-tester/ffmpeg_runtime.py

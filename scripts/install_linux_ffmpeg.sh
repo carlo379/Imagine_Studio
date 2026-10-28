@@ -21,7 +21,7 @@ printf '%s  source.tar.xz\n' "$checksum" | sha256sum -c -
 tar -xf source.tar.xz
 cd "ffmpeg-$version"
 ./configure --prefix="$prefix" --disable-debug --disable-doc --disable-ffplay \
-  --enable-gpl --enable-libx264 --enable-libass --enable-libfreetype \
+  --enable-gpl --enable-libmp3lame --enable-libx264 --enable-libass --enable-libfreetype \
   --enable-libharfbuzz --enable-libfontconfig
 make -j "${IMAGINE_FFMPEG_BUILD_JOBS:-2}"
 make install
