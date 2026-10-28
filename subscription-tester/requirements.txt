@@ -6,4 +6,4 @@ rich==15.0.0
 Pillow==13.0.0
 cryptography==50.0.2
 PyJWT==2.15.1
-reportlab==5.0.1
+reportlab==5.1.0
