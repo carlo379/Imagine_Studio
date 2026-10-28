@@ -1,6 +1,6 @@
 const assert=require('node:assert/strict'),path=require('node:path'),{buildSync}=require('esbuild'),{JSDOM}=require('jsdom');
 const output=path.resolve('.validation/project-library-ui.cjs');buildSync({entryPoints:['ui/production-library.tsx'],bundle:true,platform:'node',external:['react','react-dom'],outfile:output,logLevel:'silent'});
-const dom=new JSDOM('<div id="root"></div>',{url:'http://test.invalid/'});global.window=dom.window;global.document=dom.window.document;global.navigator=dom.window.navigator;global.IS_REACT_ACT_ENVIRONMENT=true;
+const dom=new JSDOM('<div id="root"></div>',{url:'http://test.invalid/'});global.window=dom.window;global.document=dom.window.document;global.navigator=dom.window.navigator;Object.defineProperty(global,'sessionStorage',{value:dom.window.sessionStorage,configurable:true});global.IS_REACT_ACT_ENVIRONMENT=true;
 const React=require('react'),{act}=React,{createRoot}=require('react-dom/client'),{ProductionLibrary}=require(output);
 const calls=[],record={id:'quick',revision:1,kind:'quick',title:'My video',item_type:'image',project_label:'Quick Video',last_updated:100,child_count:0};
 global.fetch=async(url,options)=>{calls.push(JSON.parse(options.body));return {ok:true,json:async()=>({items:[record],total:1,production_total:1,has_more:false})};};
