@@ -454,16 +454,19 @@ class ImageStudio:
                         elif not payload.get('data'):raise ValueError('No image request ID returned. Check usage before generating again.')
                     else:payload=self.poll_grok(client,job)
                     outputs=self.cache_grok(payload,job)
-            with self.lock:
+            # Publish completion and release the workspace generation gate together.
+            # A client seeing done must be able to submit its next approved job.
+            with self.lock,self.app.lock:
                 job.update(status='done',recoverable=False,outputs=outputs,message='Mock candidates ready. No account usage consumed.' if self.app.mock else 'Candidates saved locally. Review each before approving.');self.persist()
+                self.app.state.update(phase=job['status'],message=job['message'])
         except Exception as e:
             message=openai_images.safe_error(e) if isinstance(e,ValueError) else 'Network, account authentication or response validation failed.'
             if job.get('provider')=='grok' and not job.get('request_id') and not self.app.mock:message+=' No request ID was saved; check usage before starting another generation.'
-            with self.lock:
+            with self.lock,self.app.lock:
                 job.update(status='error',message=message+' No automatic retry was made.')
                 if re.search(r'quota|rate.?limit|usage.?limit|429',message,re.I):job['limit_error_at']=time.time()
+                self.app.state.update(phase=job['status'],message=job['message'])
                 self.persist()
-        finally:self.app.update(phase=job['status'],message=job['message'])
 
     def output(self, job, identity):
         output=next((o for o in job['outputs'] if o['id']==identity),None)
