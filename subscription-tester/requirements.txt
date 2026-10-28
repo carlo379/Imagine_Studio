@@ -1,7 +1,7 @@
 httpx==0.28.1
 ruamel.yaml==0.19.1
 python-dotenv==1.2.4
-platformdirs==4.12.2
+platformdirs==4.13.5
 rich==15.0.0
 Pillow==13.0.0
 cryptography==50.0.2
