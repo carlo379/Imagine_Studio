@@ -31,7 +31,7 @@ class PublicSourceTests(unittest.TestCase):
                 self.assertFalse(self.policy['eligible'](name))
 
     def test_runtime_sources_and_attributed_fixture_are_included(self):
-        for name in ['.github/dependabot.yml', 'LICENSE', 'subscription-tester/AGENT_API_REFERENCE.md', 'LICENSES/CC-BY-4.0.txt', 'subscription-tester/editing_tools.py',
+        for name in ['subscription-tester/scripts/demo_song_performance.py', '.github/dependabot.yml', 'LICENSE', 'subscription-tester/AGENT_API_REFERENCE.md', 'LICENSES/CC-BY-4.0.txt', 'subscription-tester/editing_tools.py',
                      'subscription-tester/static/build/manifest.json',
                      'subscription-tester/tests/fixtures/ducking-speech.wav',
                      'subscription-tester/tests/fixtures/ducking-speech.md',

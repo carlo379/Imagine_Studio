@@ -19,7 +19,7 @@ APP_DOCS = {'README.md', 'AGENT_API.md', 'AGENT_API_REFERENCE.md', 'USER_GUIDE.m
             'IMAGE_STUDIO_GUIDE.md', 'PRODUCTION_WORKSPACE_GUIDE.md', 'SCRIPT_TEMPLATE_GUIDE.md',
             'SERIES_BOOKS_GUIDE.md', 'STORY_STUDIO_GUIDE.md', 'SCRIPT_TEMPLATE.txt'}
 SCRIPTS = {'scripts/verify.py', 'scripts/check_docs.py', 'scripts/check_secrets.py', 'scripts/prepare_public_source.py', 'scripts/verify_public_source.py', 'scripts/check_public_privacy.py', 'scripts/migrate_user_data.py', 'scripts/install_linux_ffmpeg.sh'}
-APP_SCRIPTS = {'build_frontend.mjs', 'camera-isolation.cjs', 'camera-reference.cjs', 'install_parity_browser.py', 'parity-browser.json'}
+APP_SCRIPTS = {'demo_song_performance.py', 'build_frontend.mjs', 'camera-isolation.cjs', 'camera-reference.cjs', 'install_parity_browser.py', 'parity-browser.json'}
 MEDIA = {'subscription-tester/tests/fixtures/ducking-speech.wav'}
 PUBLIC_DATA = {'package.json', 'package-lock.json', 'studio-config.json', 'tsconfig.json', 'prompt_check_rules.json', 'static/camera-presets.json', 'static/build/manifest.json'}
 

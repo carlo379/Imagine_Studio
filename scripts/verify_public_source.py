@@ -22,7 +22,7 @@ for forbidden in ['.git', '.state', '.env', 'codex-reports', 'HANDOFF.md', 'subs
 for path in source.rglob('*'):
     if path.is_symlink() or path.name in {'.git', '.state', '.deps', '.venv', 'node_modules'} or path.name.startswith('.env'):
         errors.append('Local-only path found: ' + str(path.relative_to(source)))
-for required in ['LICENSE', 'THIRD_PARTY_LICENSES.txt', 'LICENSES/CC-BY-4.0.txt', 'subscription-tester/tests/fixtures/ducking-speech.md', 'subscription-tester/tests/fixtures/ducking-speech.wav']:
+for required in ['subscription-tester/scripts/demo_song_performance.py', 'LICENSE', 'THIRD_PARTY_LICENSES.txt', 'LICENSES/CC-BY-4.0.txt', 'subscription-tester/tests/fixtures/ducking-speech.md', 'subscription-tester/tests/fixtures/ducking-speech.wav']:
     if not (source / required).is_file():
         errors.append('Required rights record missing: ' + required)
 for error in errors:
