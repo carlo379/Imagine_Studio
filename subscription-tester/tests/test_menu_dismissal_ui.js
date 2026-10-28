@@ -1,0 +1,15 @@
+const assert=require('node:assert/strict'),{JSDOM}=require('jsdom'),{buildSync}=require('esbuild'),fs=require('fs');
+fs.mkdirSync('.validation',{recursive:true});buildSync({entryPoints:['ui/menu-dismissal.ts'],bundle:true,platform:'node',format:'cjs',outfile:'.validation/menu-dismissal.cjs'});
+const {installMenuDismissal}=require('../.validation/menu-dismissal.cjs');
+const dom=new JSDOM('<button id="outside">Outside</button><details class="p-shot-menu" id="a"><summary>First</summary><button>Action</button></details><details class="p-shot-menu" id="b"><summary>Second</summary><button>Action</button></details><details id="accordion" open><summary>Story direction</summary><p>Content</p></details><div class="library-card-actions"><details id="library"><summary>Use in…</summary><button>Use image</button></details></div>');
+const d=dom.window.document,a=d.getElementById('a'),b=d.getElementById('b'),accordion=d.getElementById('accordion'),outside=d.getElementById('outside'),library=d.getElementById('library');
+const cleanup=installMenuDismissal(d);
+const pointer=el=>el.dispatchEvent(new dom.window.Event('pointerdown',{bubbles:true}));
+a.open=true;pointer(a.querySelector('summary'));assert(a.open,'Inside pointer keeps menu open');pointer(outside);assert(!a.open,'Outside pointer closes menu');
+a.open=true;pointer(b.querySelector('summary'));b.querySelector('summary').click();assert(!a.open);assert(b.open,'Opening a second menu closes the first');
+pointer(b.querySelector('button'));assert(b.open,'Pointer does not hide action before click');let invoked=false;b.querySelector('button').onclick=()=>invoked=true;b.querySelector('button').click();assert(invoked);assert(!b.open,'Choosing an action closes its menu');
+a.open=true;outside.click();assert(!a.open,'Click-only dismissal works too');
+a.open=true;const escape=new dom.window.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true});d.dispatchEvent(escape);assert(!a.open);assert(escape.defaultPrevented);assert.equal(d.activeElement,a.querySelector('summary'));
+a.open=true;library.open=true;library.dispatchEvent(new dom.window.Event('toggle'));assert(!a.open);assert(library.open);library.querySelector('button').click();assert(!library.open);
+assert(accordion.open,'Ordinary editor disclosures are unaffected');cleanup();a.open=true;pointer(outside);assert(a.open,'Listeners removed on cleanup');
+dom.window.close();console.log('Dropdown dismissal: outside click, single open menu, action selection, Escape focus, library menus, accordion preservation and cleanup pass.');

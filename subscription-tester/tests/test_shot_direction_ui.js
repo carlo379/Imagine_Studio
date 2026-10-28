@@ -1,0 +1,13 @@
+const assert=require('node:assert/strict'),fs=require('fs'),{JSDOM}=require('jsdom'),{buildSync}=require('esbuild');
+fs.mkdirSync('.validation',{recursive:true});buildSync({entryPoints:['ui/shot-direction.tsx'],bundle:true,platform:'node',format:'cjs',external:['react'],outfile:'.validation/shot-direction-test.cjs'});
+const dom=new JSDOM('<div id="root"></div>',{url:'http://test.invalid'});global.window=dom.window;global.document=window.document;global.navigator=window.navigator;global.IS_REACT_ACT_ENVIRONMENT=true;
+const React=require('react'),{act}=React,{createRoot}=require('react-dom/client'),{ShotDirection}=require('../.validation/shot-direction-test.cjs');
+const root=createRoot(document.getElementById('root'));let calls=[];let shot={id:'shot',revision:3,title:'Door opening',story_direction:'Robin opens the door.'};
+const render=()=>root.render(React.createElement(ShotDirection,{shot,save:async data=>{calls.push(data);throw Error('Newer changes exist.');}}));
+(async()=>{await act(render);await act(()=>[...document.querySelectorAll('button')].find(b=>b.textContent==='Edit shot direction').click());
+ const textarea=document.querySelector('textarea');await act(()=>{Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set.call(textarea,'Start with the door already open.');textarea.dispatchEvent(new window.Event('input',{bubbles:true}));});
+ assert.equal(window.studioShotDirectionDirty,true);
+ shot={...shot,revision:4,story_direction:'Another editor changed the shot.'};await act(render);assert.equal(textarea.value,'Start with the door already open.');
+ await act(()=>[...document.querySelectorAll('button')].find(b=>b.textContent==='Save direction').click());assert.equal(calls[0].expected_revision,3);assert.equal(calls[0].story_direction,'Start with the door already open.');assert(document.querySelector('[role=alert]').textContent.includes('Newer'));assert.equal(textarea.value,'Start with the door already open.');
+ await act(()=>[...document.querySelectorAll('button')].find(b=>b.textContent==='Cancel').click());assert.equal(window.studioShotDirectionDirty,false);await act(async()=>root.render(React.createElement(ShotDirection,{shot,autoEdit:1,save:async()=>{}})));assert.equal(document.querySelector('details').open,true,'Menu shortcut expands editor');assert(document.querySelector('textarea'),'Menu shortcut opens editing fields');await act(()=>root.unmount());dom.window.close();console.log('Shot direction UI: local edits survive refresh and conflicts; saves use the original revision; cancel clears the navigation guard.');
+})().catch(e=>{console.error(e);dom.window.close();process.exitCode=1;});

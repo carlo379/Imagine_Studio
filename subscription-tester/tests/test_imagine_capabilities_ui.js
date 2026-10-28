@@ -1,0 +1,36 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const {JSDOM}=require('jsdom');
+const dom=new JSDOM(fs.readFileSync('index.html','utf8'),{url:'http://localhost/'}),document=dom.window.document;
+const ctx={window:dom.window,document,Option:dom.window.Option,Event:dom.window.Event,CustomEvent:dom.window.CustomEvent,localStorage:dom.window.localStorage,TextEncoder,crypto:require('node:crypto').webcrypto,structuredClone,console,JSON,Map,Set,Promise,setTimeout:()=>0,clearTimeout(){},setInterval:()=>0};
+vm.createContext(ctx);const run=code=>vm.runInContext(code,ctx),get=code=>JSON.parse(JSON.stringify(run(code)));
+run(fs.readFileSync('static/studio.js','utf8').replace('\ninit();','\n'));
+run(fs.readFileSync('static/image-studio.js','utf8'));
+ctx.namedExpansion=()=>({prompt:run('project.prompt'),errors:[]});ctx.renderVideoReferenceCards=()=>{};ctx.renderSceneNamed=()=>{};ctx.queueSceneSave=()=>{};ctx.previewSource=()=>{};ctx.sceneRecord=null;ctx.imageSyncComparison=()=>{};
+ctx.sceneAPI=async()=>[];ctx.api=async()=>[];
+run("config={models:['grok-imagine-video-1.5','grok-imagine-video-1.5-lite'],voices:['eve','eve','rex'],prompt_limit_chars:4096,prompt_limit_bytes:4096};project=blank();");
+for(const extra of [{refs:[{id:'ref',source:{id:'image'}}]},{voices:[{id:'voice',voice:'eve'}],audio:false},{last:{id:'image'}},{keys:[{id:'key',source:{id:'image'},slot:3}]}]){
+ run('project={...blank(),...'+JSON.stringify(extra)+'};');const before=get('project');
+ assert.equal(run("chooseVideoModel('grok-imagine-video-1.5-lite')"),false);assert.deepEqual(get('project'),before);
+}
+run("project=blank();project.first={id:'first-image',width:800,height:600,src:'/api/assets/first-image'};project.prompt='';");
+assert.equal(run("chooseVideoModel('grok-imagine-video-1.5-lite')"),true);
+assert.equal(document.getElementById('ratio').disabled,true);assert(document.getElementById('previewInfo').textContent.includes('800:600'));
+assert.equal(get('compile().image').asset_id,'first-image');assert.equal(document.getElementById('addVoice').disabled,true);assert.equal(document.getElementById('audio').disabled,false);
+run("project=blank();project.model='grok-imagine-video';render();");
+assert(document.querySelector('#model option[value="grok-imagine-video"]').disabled);assert(get('constraints().errors').some(e=>e.includes('historical')));
+run("project=blank();project.refs=[{id:'ref',source:{id:'image'}}];project.prompt='🙂'.repeat(1025);");
+assert(get('constraints().errors').some(e=>e.includes('UTF-8 bytes')));
+const schema={model:'grok-imagine-image-2.0',models:{'grok-imagine-image-2.0':{provider:'grok',ratios:['16:9'],resolutions:['1k','1.5k','2k'],qualities:['auto'],counts:[1,2,4]},'gpt-image-2':{provider:'codex',ratios:['auto'],resolutions:['auto'],qualities:['auto'],counts:[1]}},prompt_limit_chars:4096};
+const draft={id:'draft',title:'Test images',revision:1,settings:{model:'grok-imagine-image-2.0',n:4,prompt:'Landscape.',ratio:'16:9',resolution:'1.5k',quality:'auto',bindings:[],extras:[],base:null}};
+const job={id:'job',draft,model:draft.settings.model,status:'done',message:'Candidates ready.',outputs:[0,1,2,3].map(i=>({id:'output-'+i,src:'/api/assets/output-'+i,name:'image-'+i+'.png',approved:i===2,candidate_index:i}))};
+run('imageSchema='+JSON.stringify(schema)+';imageSettings='+JSON.stringify(draft.settings)+';imageDraft='+JSON.stringify(draft)+';account={mock:true,signed_in:true,phase:"done"};imageValid=true;');
+ctx.imageProviderControls();assert.deepEqual([...document.querySelectorAll('#imageCandidateCount option')].map(o=>o.value),['1','2','4']);assert([...document.querySelectorAll('#imageResolution option')].some(o=>o.value==='1.5k'));
+run('imageSettings.model="gpt-image-2";imageProviderControls();');assert.equal(document.getElementById('imageCandidateCount').disabled,true);assert.equal(document.getElementById('imageCandidateCount').options.length,1);
+run('imageSettings='+JSON.stringify(draft.settings)+';');ctx.imageShowJob(job);
+assert.equal(document.querySelectorAll('#imageCandidates button').length,4);
+document.querySelectorAll('#imageCandidates button')[2].click();
+assert.equal(run('imageSelectedOutput().id'),'output-2');assert(document.getElementById('imageResult').src.endsWith('/api/assets/output-2'));assert(document.getElementById('imageDownload').href.endsWith('/jobs/job/outputs/output-2'));assert.equal(document.getElementById('imageApprove').textContent,'Remove Approval');assert.equal(document.getElementById('imageUse').disabled,false);
+ctx.imageShowJob({...job,outputs:job.outputs.map(o=>({...o,approved:o.id==='output-3'}))});assert.equal(run('imageSelectedOutput().id'),'output-2');assert.equal(document.getElementById('imageUse').disabled,true,'Selection and review must be independent per candidate');
+run('imageJobs=[{...imageActiveJob,recoverable:true}];imageGate();');assert.equal(document.getElementById('imageGenerate').disabled,true);assert(document.getElementById('imageGenerate').title.includes('Resume'));
+ctx.renderImageCandidates(null);assert.equal(document.getElementById('imageCandidates').hidden,true);
+dom.window.close();console.log('Capability UI: safe Lite switching, source ratio, historical models, byte limits, 1.5k/count controls, independent candidate selection/review/download and recovery gate pass.');

@@ -1,0 +1,16 @@
+const assert=require('node:assert/strict');const {mentionAtCaret,filterAssets}=require('../static/asset-autocomplete.js');
+assert.deepEqual(mentionAtCaret('Visit @Fo',9),{start:6,end:9,query:'Fo'});
+assert.deepEqual(mentionAtCaret('@SampleHero',3),{start:0,end:11,query:'Sa'});
+assert.equal(mentionAtCaret('user@example.com',6),null);assert.equal(mentionAtCaret('@Fo ',4),null);assert.equal(mentionAtCaret('@Fo',0,3),null);
+assert.equal(mentionAtCaret('(@',2).query,'');assert.equal(mentionAtCaret('Hello\n@',7).query,'');
+const refs=[{id:'1',title:'SampleHero',handle:'SampleHero',archived:false},{id:'2',title:'Robot lab',handle:'Lab',archived:false},{id:'3',title:'Gone',handle:'Former',archived:true}];
+assert.equal(filterAssets(refs,'').length,2);assert.equal(filterAssets(refs,'sa')[0].id,'1');assert.equal(filterAssets(refs,'LAB')[0].id,'2');assert.equal(filterAssets(refs,'unknown').length,0);
+console.log('Asset autocomplete: caret boundaries, mid-token replacement, case-insensitive filtering and archived asset checks passed.');
+const {syncImageMentions}=require('../static/asset-autocomplete.js');
+const asset=(handle,id=handle)=>({id,title:handle,handle,images:[{asset_id:id}],archived:false});
+const settings={prompt:'@Robot at @LAB, @robot again. user@Else.example @RobotOther',bindings:[],extras:[],base:null};
+assert.equal(syncImageMentions(settings,[asset('Robot'),asset('Lab'),asset('Else')]),2);
+assert.deepEqual(settings.bindings.map(b=>b.snapshot.handle),['Robot','Lab']);
+settings.bindings[0].selected=[];assert.equal(syncImageMentions(settings,[asset('Robot'),asset('Lab')]),0);assert.deepEqual(settings.bindings[0].selected,[]);
+const full={prompt:'@Robot',bindings:[],extras:[1,2,3,4],base:{asset_id:'base'}};assert.equal(syncImageMentions(full,[asset('Robot')]),0);
+assert.equal(syncImageMentions({...full,extras:[],base:null},[{...asset('Robot'),archived:true}]),0);

@@ -1,0 +1,7 @@
+.deps/
+.venv/
+.state/
+__pycache__/
+screenshots/
+.env*
+node_modules/

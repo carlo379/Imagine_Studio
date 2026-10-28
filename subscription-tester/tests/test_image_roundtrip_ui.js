@@ -1,0 +1,21 @@
+const assert=require('node:assert/strict'),path=require('node:path'),{buildSync}=require('esbuild'),{JSDOM}=require('jsdom');
+const compiled=path.resolve('.validation/series-books/image-roundtrip-ui.cjs');buildSync({entryPoints:['ui/image-roundtrip.ts'],bundle:true,platform:'node',external:['react','react-dom'],outfile:compiled,logLevel:'silent'});
+const dom=new JSDOM('',{url:'http://test.invalid/'});global.window=dom.window;global.sessionStorage=dom.window.sessionStorage;
+const {rememberImageReturn,readImageReturn,clearImageReturn,finishImageReturn,persistImageReturn}=require(compiled);
+let calls=[],rejected=false;
+global.fetch=async(url,options)=>{calls.push({url,data:JSON.parse(options.body)});return {ok:!rejected,json:async()=>rejected?{error:{message:'The original selection changed.'}}:{views:[{id:'front',selected:calls.at(-1).data.asset_id}]}};};
+(async()=>{
+ const target={route:{page:'project',workspace:{production_id:'p',episode_id:'ep',stage:'develop'}},title:'Family Home · Series Bible',context:{scope:'series/p',entity_id:'home',view_id:'front',expected_revision:7,page:2,visual:{activeStep:3,expanded:[false,true,false,true],heroChoice:'original',scrollTop:465}}};
+ rememberImageReturn(target);assert.deepEqual(readImageReturn(),target,'Destination survives refreshing Image Studio');
+ const route=await finishImageReturn(readImageReturn(),{job_id:'edited-job',asset_id:'edited'});assert.deepEqual(route,target.route);
+ assert.deepEqual(calls[0],{url:'/api/agent/filmmaking/assets/front/return-image',data:{expected_revision:7,job_id:'edited-job',asset_id:'edited'}});
+ const restored=JSON.parse(sessionStorage.getItem('imagine-development-return-series/p'));assert.equal(restored.entity_id,'home');assert.equal(restored.page,2);assert.equal(restored.visual.scrollTop,465);assert.deepEqual(restored.visual.expanded,target.context.visual.expanded);assert.equal(restored.visual.heroChoice,'edited');assert(restored.adopted);assert.equal(sessionStorage.getItem('imagine-series-tab-p'),'bible');
+ clearImageReturn();assert.equal(readImageReturn(),null);
+ const episode={...target,context:{...target.context,scope:'episodes/ep'}};await finishImageReturn(episode,null);assert.equal(calls.length,1,'Returning without a finished result does not adopt or generate');assert.equal(sessionStorage.getItem('imagine-series-tab-p'),'episodes');assert.equal(sessionStorage.getItem('episode-book-open-p'),'1');
+ sessionStorage.removeItem('imagine-development-return-series/p');rememberImageReturn(target);rejected=true;await assert.rejects(()=>finishImageReturn(target,{job_id:'foreign',asset_id:'other'}),/selection changed/);assert(!sessionStorage.getItem('imagine-development-return-series/p'),'Failed adoption cannot falsely resume as saved');assert.deepEqual(readImageReturn(),target,'Failure preserves the return destination for recovery');
+ rejected=false;calls=[];
+ global.fetch=async(url,options={})=>{const data=options.body?JSON.parse(options.body):null;calls.push({url,data});return {ok:true,json:async()=>({id:'opaque-flow',revision:1,status:'open',value:data})};};
+ const durable=await persistImageReturn({...target,draft_id:'original-draft'});assert.equal(durable.flow_id,'opaque-flow');assert.equal(readImageReturn().flow_revision,1);assert.equal(calls[0].url,'/api/browser-handoff/flows');assert.equal(calls[0].data.draft_id,'original-draft');
+ await finishImageReturn(durable,null);const metadata=JSON.parse(sessionStorage.getItem('imagine-development-return-series/p'));assert.equal(metadata.visual.flow_id,'opaque-flow');assert.equal(metadata.visual.flow_revision,1);assert.equal(calls.length,1,'Return without result only restores context; saved-data routes stay separate');assert(readImageReturn(),'Return is retained until the real DOM restoration acknowledges it');
+ dom.window.close();console.log('Image round trip: durable exact destination, reviewed result handoff, page/section/scroll restoration, episode target and failed-return recovery pass.');
+})().catch(error=>{console.error(error);dom.window.close();process.exitCode=1;});

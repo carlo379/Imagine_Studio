@@ -1,0 +1,212 @@
+{
+  "version": 1,
+  "defaults": {
+    "camera": {
+      "yaw": 0,
+      "elevation": 8,
+      "distance": 5,
+      "target_x": 0,
+      "target_y": 1,
+      "target_z": 0,
+      "lens": 35
+    },
+    "subjects": [
+      {
+        "name": "Subject 1",
+        "asset_id": null,
+        "x": -0.6,
+        "z": 0,
+        "rotation": 0,
+        "pose": "stand",
+        "arms": 0,
+        "head": 0
+      }
+    ],
+    "ratio": "16:9",
+    "environment": "",
+    "style": "Cinematic natural light"
+  },
+  "frame_sizes": {
+    "16:9": {
+      "width": 1280,
+      "height": 720
+    },
+    "9:16": {
+      "width": 720,
+      "height": 1280
+    },
+    "1:1": {
+      "width": 1280,
+      "height": 1280
+    }
+  },
+  "camera": [
+    {
+      "id": "wide",
+      "name": "Wide",
+      "patch": {
+        "distance": 7,
+        "lens": 28,
+        "elevation": 8
+      }
+    },
+    {
+      "id": "medium",
+      "name": "Medium",
+      "patch": {
+        "distance": 4,
+        "lens": 50,
+        "elevation": 5
+      }
+    },
+    {
+      "id": "close-up",
+      "name": "Close-up",
+      "patch": {
+        "distance": 2.1,
+        "lens": 85,
+        "target_y": 1.5,
+        "elevation": 0
+      }
+    },
+    {
+      "id": "low-angle",
+      "name": "Low angle",
+      "patch": {
+        "distance": 4,
+        "lens": 35,
+        "target_y": 1,
+        "elevation": -8
+      }
+    },
+    {
+      "id": "high-angle",
+      "name": "High angle",
+      "patch": {
+        "distance": 5,
+        "lens": 35,
+        "elevation": 40
+      }
+    },
+    {
+      "id": "over-shoulder",
+      "name": "Over shoulder",
+      "patch": {
+        "distance": 3.5,
+        "lens": 50,
+        "yaw": 35,
+        "target_y": 1.4
+      }
+    },
+    {
+      "id": "birds-eye",
+      "name": "Bird’s eye",
+      "patch": {
+        "distance": 7,
+        "lens": 28,
+        "elevation": 80,
+        "target_y": 0.1
+      }
+    }
+  ],
+  "movements": [
+    {
+      "id": "static",
+      "name": "Locked off",
+      "group": "Essentials",
+      "effect": "Let the performance lead.",
+      "prompt": "A locked-off camera. Fixed framing throughout; no pan, tilt, zoom or drift."
+    },
+    {
+      "id": "push",
+      "name": "Slow push-in",
+      "group": "Essentials",
+      "effect": "Draw attention to a realization.",
+      "prompt": "A smooth, slow physical dolly-in toward the subject, maintaining the same lens and continuous focus. Gentle foreground parallax."
+    },
+    {
+      "id": "pull",
+      "name": "Pull back",
+      "group": "Essentials",
+      "effect": "Reveal the larger world.",
+      "prompt": "A smooth physical dolly-out from the subject to reveal the surroundings. Keep the subject anchored in frame as the environment opens up."
+    },
+    {
+      "id": "pan",
+      "name": "Pan right",
+      "group": "Essentials",
+      "effect": "Follow a reveal across the scene.",
+      "prompt": "A controlled pan to the right from a fixed camera position. Smooth constant speed; no lateral camera travel."
+    },
+    {
+      "id": "panleft",
+      "name": "Pan left",
+      "group": "Essentials",
+      "effect": "Reveal what lies beyond the frame.",
+      "prompt": "A controlled pan to the left from a fixed camera position. Smooth constant speed; no lateral camera travel."
+    },
+    {
+      "id": "tilt",
+      "name": "Tilt up",
+      "group": "Essentials",
+      "effect": "Reveal height or scale.",
+      "prompt": "A slow upward tilt from a fixed camera position, revealing the subject from lower details to the upper frame."
+    },
+    {
+      "id": "tiltdown",
+      "name": "Tilt down",
+      "group": "Essentials",
+      "effect": "Discover a detail below.",
+      "prompt": "A slow downward tilt from a fixed camera position, revealing the lower scene with steady smooth movement."
+    },
+    {
+      "id": "track",
+      "name": "Tracking shot",
+      "group": "Cinematic",
+      "effect": "Travel alongside the action.",
+      "prompt": "A smooth lateral tracking shot moving alongside the subject, matching their pace. Maintain consistent framing with clear background parallax."
+    },
+    {
+      "id": "orbit",
+      "name": "Orbit",
+      "group": "Cinematic",
+      "effect": "Show a subject from a new side.",
+      "prompt": "A smooth quarter-circle orbit around the subject, keeping them centered. Preserve the world geometry and reveal the changing background naturally."
+    },
+    {
+      "id": "crane",
+      "name": "Crane rise",
+      "group": "Cinematic",
+      "effect": "Open up the scene from above.",
+      "prompt": "A continuous crane rise upward and gently backward, transitioning from eye level to an elevated wide view. Keep the horizon stable."
+    },
+    {
+      "id": "handheld",
+      "name": "Handheld",
+      "group": "Expressive",
+      "effect": "Add a human sense of presence.",
+      "prompt": "Subtle handheld camera movement with natural micro-sway. Controlled and readable, without excessive shake or sudden reframing."
+    },
+    {
+      "id": "zoom",
+      "name": "Crash zoom",
+      "group": "Expressive",
+      "effect": "Land on an urgent detail.",
+      "prompt": "A rapid optical zoom-in toward the subject, then settle into a stable close-up. The camera remains in place; no physical dolly movement."
+    },
+    {
+      "id": "dollyzoom",
+      "name": "Dolly zoom",
+      "group": "Expressive",
+      "effect": "Create a moment of disorientation.",
+      "prompt": "A deliberate dolly zoom: move the camera backward while optically zooming in, keeping the subject the same size as background perspective compresses."
+    },
+    {
+      "id": "whip",
+      "name": "Whip pan",
+      "group": "Expressive",
+      "effect": "Move abruptly to a new focus.",
+      "prompt": "A fast whip pan to the right with brief natural motion blur, then settle smoothly on the new subject. One continuous shot."
+    }
+  ]
+}

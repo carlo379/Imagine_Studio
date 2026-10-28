@@ -1,0 +1,16 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Export failure fixture filename passed to assertRaisesRegex, not an API credential"
+condition = "AND"
+paths = ['''(^|/)subscription-tester/tests/test_editing_tools\.py$''']
+regexTarget = "match"
+regexes = ["APIError,'missing-frame\\.mp4"]
+
+[[allowlists]]
+description = "Deliberately unsigned, synthetic JWT header in the redaction test"
+condition = "AND"
+paths = ['''(^|/)subscription-tester/tests/test_grok_debug_trace\.py$''']
+regexTarget = "match"
+regexes = ["token='eyJhbGciOiJub25lIn0\\.'"]

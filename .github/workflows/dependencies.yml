@@ -1,0 +1,27 @@
+name: Dependency security
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: '19 8 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python -m pip install pip-audit==2.10.1
+      - name: Runtime and optional transcription dependencies
+        run: python -m pip_audit -r subscription-tester/requirements.txt -r subscription-tester/requirements-transcription.txt
+      - name: Frontend and test dependencies
+        working-directory: subscription-tester
+        run: npm audit --package-lock-only --audit-level=moderate

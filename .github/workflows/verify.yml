@@ -1,0 +1,70 @@
+name: Offline verification
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: subscription-tester/package-lock.json
+      - name: Install FFmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config nasm curl xz-utils libx264-dev libass-dev libfreetype6-dev libharfbuzz-dev libfontconfig1-dev zlib1g-dev fonts-dejavu-core
+          sh scripts/install_linux_ffmpeg.sh "$RUNNER_TEMP/imagine-ffmpeg"
+          echo "$RUNNER_TEMP/imagine-ffmpeg/bin" >> "$GITHUB_PATH"
+      - name: Install FFmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
+      - name: Record toolchain
+        run: |
+          python3 --version
+          node --version
+          ffmpeg -version
+          ffprobe -version
+          python3 subscription-tester/ffmpeg_runtime.py
+      - name: Clean setup with pinned mock-auth test dependency
+        working-directory: subscription-tester
+        run: sh setup.sh
+      - name: Documentation links and reproducible bundles
+        run: |
+          python3 scripts/check_docs.py
+          git diff --exit-code -- subscription-tester/static/production.js subscription-tester/static/build/manifest.json subscription-tester/static/camera-renderer.js subscription-tester/static/camera-renderer.cjs
+      - name: Offline suites
+        run: python3 scripts/verify.py
+      - name: Public source boundary and privacy
+        run: |
+          python3 scripts/prepare_public_source.py
+          python3 scripts/verify_public_source.py
+      - name: Whitespace
+        run: git diff --check
+  secrets:
+    runs-on: macos-14
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Redacted history and eligible-source scan
+        run: |
+          brew install gitleaks
+          python3 scripts/check_secrets.py

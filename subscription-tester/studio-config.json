@@ -1,0 +1,17 @@
+{
+  "upload_limit_mb": 10,
+  "prompt_limit_chars": 4096,
+  "poll_interval_seconds": 5,
+  "poll_timeout_seconds": 600,
+  "live_generations_enabled": true,
+  "assistant_grok_model": "grok-4.7",
+  "assistant_grok_reasoning_effort": "medium",
+  "download_limit_mb": 300,
+  "reference_title_limit": 80,
+  "reference_description_limit": 2000,
+  "reference_handle_limit": 40,
+  "image_output_limit_mb": 20,
+  "image_timeout_seconds": 180,
+  "subscription_image_timeout_seconds": 600,
+  "prompt_limit_bytes": 4096
+}

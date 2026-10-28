@@ -1,0 +1,9 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),{JSDOM}=require('jsdom');
+const dom=new JSDOM('<div id="libraryImages"></div>'),doc=dom.window.document;
+const assets=[{id:'old',name:'Old image'},{id:'middle',name:'Middle image'},{id:'recent',name:'Latest generated image'}],urls=[];let chosen=null;
+const ctx={assets,urls,$:id=>doc.getElementById(id),button:(label,fn,cls)=>{const b=doc.createElement('button');b.textContent=label;b.className=cls;b.onclick=fn;return b;},el:(tag,cls,txt)=>{const el=doc.createElement(tag);el.className=cls;el.textContent=txt||'';return el;},choose:s=>chosen=s.id,thumbnail:s=>{const img=doc.createElement('img');img.alt=s.name;return img;},dragSource:()=>{},removeRememberedURL:()=>{}};
+vm.createContext(ctx);const code=fs.readFileSync('static/studio.js','utf8');vm.runInContext(code.slice(code.indexOf('function renderLibrary(){'),code.indexOf('async function uploadFiles(')),ctx);
+ctx.renderLibrary();const labels=()=>Array.from(doc.querySelectorAll('button.library-image span')).map(e=>e.textContent);
+assert.deepEqual(labels(),['Latest generated image','Middle image','Old image']);assert.deepEqual(assets.map(a=>a.id),['old','middle','recent'],'Original source ordering is not mutated');doc.querySelector('button').click();assert.equal(chosen,'recent');
+assets.push({id:'capture',name:'New captured frame'});ctx.renderLibrary();assert.equal(labels()[0],'New captured frame');assets.push({id:'upload',name:'New upload'});ctx.renderLibrary();assert.equal(labels()[0],'New upload');doc.querySelector('button').click();assert.equal(chosen,'upload');
+assert.equal(doc.querySelectorAll('button.library-image').length,5);dom.window.close();console.log('Frame picker: newest first, new captures/uploads at top, unchanged source arrays and correct click selection pass.');

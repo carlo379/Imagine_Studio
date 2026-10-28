@@ -1,0 +1,5 @@
+# Optional local transcription extra. Install after requirements.txt.
+# This installs the engine only; supply a converted Whisper model separately.
+faster-whisper>=1.1,<2
+# faster-whisper 1.x passes metadata_errors to av.open; PyAV 19 removed it.
+av>=11,<19

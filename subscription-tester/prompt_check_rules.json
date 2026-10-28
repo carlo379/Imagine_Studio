@@ -1,0 +1,30 @@
+{
+  "action_words": "\\b(?:stays?|holds?|stands?|sits?|crouches?|watches?|looks?|faces?|turns?|walks?|moves?|reaches?|opens?|closes?|locked|still|pans?|pushes?|tilts?|tracks?|remains?|rests?|keeps?|says?|asks?)\\b",
+  "hands_off": "hands? (?:stay|stays|remain|remains|keep).{0,30}(?:off|away|sides)|(?:no|without) touch|untouched|hands? off",
+  "missing_direction": "{name} has no stated action or hold. Add a visible position and action or hold.",
+  "relative_direction": "Use the character's own left or right for gaze and turns, rather than screen/camera left or right.",
+  "multiple_lines": "More than one spoken line is recorded. Check whether this shot needs separate coverage.",
+  "prop_contact": "A pocket or hand is mentioned. Keep hands away from any prop that must stay still.",
+  "missing_voice": "{name} speaks without a bound voice. Assign a voice once in Reference identities; use the name in the body.",
+  "duplicate_voice": "{tag} appears twice. Bind it once in Reference identities.",
+  "pose_conflict": "Recorded start pose and facing direction differ. Confirm the intended turn before generating.",
+  "text_rules": [
+    {
+      "code": "relative_direction",
+      "pattern": "\\b(?:looks?|gazes?|turns?|faces?)\\b.{0,40}\\b(?:screen|camera)[ -](?:left|right)\\b",
+      "message": "Use the character's own left or right for gaze and turns, rather than screen/camera left or right."
+    },
+    {
+      "code": "multiple_lines",
+      "pattern": "[\u201c\"]([^\u201d\"\\n]+)[\u201d\"]",
+      "min_matches": 2,
+      "message": "More than one spoken line is recorded. Check whether this shot needs separate coverage."
+    },
+    {
+      "code": "prop_contact",
+      "pattern": "\\b(?:in|inside) (?:\\w+['\u2019]s |a |the |his |her |their )?(?:pocket|hand)\\b",
+      "unless": "hands? (?:stay|stays|remain|remains|keep).{0,30}(?:off|away|sides)|(?:no|without) touch|untouched|hands? off",
+      "message": "A pocket or hand is mentioned. Keep hands away from any prop that must stay still."
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const NamedScene=require('../static/named-scene.js');
+const binding=()=>({id:'mark',title:'Mark',handle:'Mark',category:'Character',description:'Approved design',refIds:['portrait','sheet'],images:[{asset_id:'portrait-asset'},{asset_id:'sheet-asset'}],voiceId:null});
+const ctx={project:{prompt:'@Mark walks.',first:{id:'first'},named:[binding()],refs:[{id:'portrait',source:{id:'portrait-asset'}},{id:'sheet',source:{id:'sheet-asset'}}],voices:[]},change:fn=>fn(),NamedScene};
+vm.createContext(ctx);vm.runInContext(fs.readFileSync('static/named-ui.js','utf8'),ctx);
+ctx.removeSceneNamedView(ctx.project.named[0],ctx.project.refs[1]);
+assert.equal(ctx.project.refs.length,1);assert.deepEqual(Array.from(ctx.project.named[0].refIds),['portrait']);assert.deepEqual(Array.from(ctx.project.named[0].images,x=>x.asset_id),['portrait-asset']);
+let result=NamedScene.expand(ctx.project.prompt,ctx.project.named,ctx.project.refs,[],true);assert.deepEqual(result.errors,[]);assert.match(result.prompt,/<IMAGE_1>/);assert(!result.prompt.includes('<IMAGE_2>'));
+ctx.project.named=[binding()];ctx.project.refs=[{id:'sheet',source:{id:'sheet-asset'}}];
+assert(NamedScene.expand(ctx.project.prompt,ctx.project.named,ctx.project.refs,[],false).errors.length);
+ctx.keepAttachedSceneViews(ctx.project.named[0]);assert.deepEqual(Array.from(ctx.project.named[0].refIds),['sheet']);assert.deepEqual(Array.from(ctx.project.named[0].images,x=>x.asset_id),['sheet-asset']);
+assert.deepEqual(NamedScene.expand(ctx.project.prompt,ctx.project.named,ctx.project.refs,[],false).errors,[]);
+ctx.project.named=[binding()];ctx.project.refs=[];ctx.keepAttachedSceneViews(ctx.project.named[0]);assert.equal(ctx.project.named[0].refIds.length,2,'An entirely missing character still requires restoration');
+assert.equal(ctx.project.prompt,'@Mark walks.');assert.equal(ctx.project.first.id,'first');
+console.log('Named view removal and legacy repair preserve aligned image bindings, mentions and first-frame tags.');

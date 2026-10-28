@@ -1,0 +1,8 @@
+Creative Commons Attribution 4.0 International
+
+Canonical full license: https://creativecommons.org/licenses/by/4.0/legalcode
+Human-readable deed: https://creativecommons.org/licenses/by/4.0/
+
+The full legal code is available at the canonical link. This notice does not
+replace that legal code. See the speech fixture provenance for attribution
+and modifications.
