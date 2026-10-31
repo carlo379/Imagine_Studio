@@ -168,7 +168,11 @@ class WorkspaceAccounts:
                 if row:identity=row[0];handler.session_hash=digest(raw)
                 else:
                     # APIs/media never silently attach an expired browser to another owner.
-                    if handler.path not in ('/','/tester'):raise APIError('session_expired','Reopen the Studio home page to start a session.',401)
+                    if handler.path not in ('/','/tester'):
+                        message='Reopen the Studio home page to start a session.'
+                        if handler.path.startswith('/api/assets/'):
+                            message='/api/assets/{id} requires a browser session or workspace Bearer token. Agent clients should use StudioClient.download_image_candidate(job_id, asset_id, destination), which calls /agent/v1/image-studio/jobs/{job_id}/outputs/{asset_id}.'
+                        raise APIError('session_expired',message,401)
                     identity=self.new_guest() if self.isolated else 'local-owner';self.session(identity,handler)
         handler.workspace_id=identity;return self.app(identity)
     def status(self,identity,session_hash=None):

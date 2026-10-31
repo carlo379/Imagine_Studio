@@ -1256,9 +1256,10 @@ Poll the returned render and image jobs and inspect the actual candidate. POST
 `filmmaking/assets/{view_id}/confirm` with `expected_revision`, `asset_id`,
 `approved: true`, and optionally `image_layout`. Layout accepts `main` (default),
 `front`, `side`, `back`, `head`, or `character_sheet`. Use `character_sheet` only
-after verifying the actual image contains the four required views. Generated
-candidate filenames are conservatively named Main image; confirmation assigns
-the reviewed layout to filenames and titles. Prompt intent does not certify the
+after verifying the actual image contains the four required views. Candidate names come from the generation layout: `character_sheet: true` or
+`image_layout: "character_sheet"` produces a Character sheet candidate; single
+views use Main image or their explicit view layout. Confirmation preserves that
+layout unless explicitly changed. Existing incorrect names can be renamed locally. Prompt intent does not certify the
 pixels. Single-view images can be confirmed normally as the main identity.
 Ordinary confirmation never rewrites descriptive Bible fields.
 
@@ -1266,7 +1267,8 @@ To deliberately prefer an image's appearance over the Bible:
 
 1. POST `filmmaking/assets/{view_id}/bible-change-preview` with view
    `expected_revision`, `expected_entity_revision`, `asset_id`, and a `changes`
-   map of descriptive profile fields, for example `{"hair":"Red"}`. Optional
+   map of descriptive profile fields, for example `{"hair":"Red"}`, or
+   `reference_ids: ["asset-id"]` (up to five available images). Optional
    `image_layout` has the values above. It accepts an available main-reference
    candidate belonging to this view, not a foreign image or outfit variation.
 2. Inspect the returned `id` and `diff` entries (`field`, entity `before`,
@@ -1300,3 +1302,100 @@ The UI shows the same unavailable-balance statement and dated rate-limit data.
 `StudioClient` exposes `usage`, `generate_workshop`, `confirm_workshop_image`,
 `preview_image_bible_change` and `confirm_image_bible_change`; the existing generic
 `request` method remains supported. Generation approval defaults to false.
+
+
+## End-to-end Storybook and workshop operations
+
+Place and prop templates emit each structured description, lighting, time and
+purpose once; display summaries are not appended a second time. Trailing sentence
+punctuation is normalized before joining style text.
+
+`answers.aspect_ratio` on the Series Bible / Episode Book is an optional image
+aspect default (`16:9`, `9:16`, `1:1`, `3:2`, `2:3`). Without an explicit setting,
+a recognizable ratio in the saved style is honored, otherwise it defaults to
+`16:9`. Character sheets keep their existing `3:2` layout. Place/prop template
+text and the compiled provider request both use the view draft's `settings.ratio`.
+`PUT filmmaking/assets/{view_id}` with `{expected_revision, ratio}` explicitly
+changes only this view; `expected_revision` is its **view revision**. Unreviewed
+automatic wording is rebuilt for that ratio; a reviewed custom prompt stays saved
+and requires review of its changed inputs. Users can override the ratio in the
+image development Generate panel. Explicit user prompt text is never rewritten
+merely to change an aspect setting.
+
+`PUT filmmaking/entities/{entity_id}` saves entity metadata without editing image
+drafts. To refresh particular unreviewed template drafts explicitly, include
+`refresh_view_ids: ["view-id"]`. No other drafts are touched. Drafts that have ever
+been AI-prepared/reviewed or manually reviewed retain their exact saved prompt,
+even if named in this list. Changed creative context can invalidate a review
+without erasing its text or provenance. Opening or saving a workshop also does
+not rewrite existing drafts.
+
+Episode Book reads add `linked_entities` with entity ID/name/category,
+`linked_revision`, `source_revision`, `source_changed`, `source_missing`, saved
+`identity_asset_id` and `source_identity_asset_id`. Links are frozen snapshots;
+source changes never silently refresh them. The UI shows **Source changed**.
+
+- `POST filmmaking/episodes/{episode_id}/storybook/refresh-links` takes
+  `{expected_revision}` for the **Episode Storybook**, not episode/scene/view
+  revisions. It explicitly refreshes selected entity snapshots and any guide
+  cards linked through `series_asset_id`. Other book content, shared style,
+  scripts, storyboard references and generated media stay fixed. Stale revisions
+  or unavailable source entities fail without changing snapshots.
+- `GET filmmaking/episodes/{episode_id}/storybook/readiness` is read-only. It
+  returns `book_revision`, `ready`, `needs_images` and `entities`. Every linked
+  entity includes `confirmed_main_image` (`asset_id`, `src`, or null),
+  `needs_main_image`, and the stale-source fields above. A newer source image does
+  not count as this book's image until the user refreshes the link.
+
+Candidate names record generation layout, rather than assuming all outputs in a
+main slot are single images. `character_sheet: true` labels the generated output
+**Character sheet**; an explicit `image_layout` can also name `main`, `front`,
+`side`, `back` or `head`. Providers can still fail to render the requested layout;
+inspect the pixels. To correct an old or mismatched name, POST
+`filmmaking/assets/{view_id}/rename-candidate` with view `expected_revision`,
+`expected_review_revision` from the candidate, `asset_id`, and a `title` without
+an extension. This updates the candidate title and download filename while
+preserving bytes, layout metadata, approval and immutable request history.
+
+`preview_image_bible_change` also accepts `changes.reference_ids`, a list of at
+most five available local image IDs. All ordinary image validation applies.
+The candidate being deliberately kept may be referenced before its confirmation;
+other generated references must already be approved. Preview validates the list
+without saving it; confirm revalidates and applies the stored proposal with the
+same explicit approval and audit rules. Clearing the list with `[]` is supported.
+
+For paid-step previews, POST
+`filmmaking/{series|episodes|worlds}/{id}/generation-preview` with the same
+`job_id`, `model` and `requests` used for generation. No approval or idempotency
+key is required because preview neither saves drafts nor calls a provider. Each
+request uses the **view** `expected_revision`, and the response separates
+`view_revision` from `draft_revision`, includes the compiled request/aspect, and
+returns `usage` before approval. Image/video validation and prompt-writing status
+reads also include `usage`. The workshop and Storybook UI display allowance status
+before generation/writing approval.
+
+The real Grok subscription balance is still **unavailable through the connected
+OAuth bridge**. The preview explicitly returns `balance_available: false`,
+`remaining: "unknown"`, the reason, and any separately labeled, timestamped
+rate-limit observation. Studio does not treat rate limits, per-request usage,
+API prepaid credits or local generation counts as a subscription balance. Grok's
+own [usage instructions](https://docs.x.ai/grok/faq) describe Settings → Usage;
+they do not supply a subscription-balance endpoint for this integration.
+
+`generate_workshop(identity, job_id, requests, ...)` accepts the series or
+production ID for `scope="series"` and `scope="worlds"`; `scope="episodes"`
+requires an episode ID. `job_id` is the owning workshop's `job.id`. Request
+`expected_revision` must be the view revision, and conflicts report its current
+value explicitly. A missing/mismatched workshop job error identifies the expected
+job/production rather than telling an already built series to build again.
+
+`/api/assets/{id}` is a browser/media URL requiring a session or Bearer header;
+it is not a public link. Agent code should use
+`download_image_candidate(image_job_id, asset_id, destination)`, which retrieves
+`/agent/v1/image-studio/jobs/{image_job_id}/outputs/{asset_id}` with the workspace
+token. Missing browser/session credentials now explain this distinction; valid
+Bearer downloads remain workspace-isolated.
+
+SDK helpers: `preview_workshop_generation`, `refresh_storybook_links`,
+`production_readiness`, and `rename_image_candidate`. Docstrings specify each
+ID/revision domain. Image-to-Bible helpers retain their existing names.

@@ -170,12 +170,31 @@ class StudioClient(SongClient):
     def entity_workshop(self,identity):return self.request('filmmaking/entities/'+identity+'/workshop')
     def usage(self):return self.request('usage')
     def generate_workshop(self,identity,job_id,requests,*,scope='series',model='gpt-image-2',approved=False,idempotency_key):
+        """Generate with human approval; identity is series/production id (series or worlds),
+        or episode id (episodes). job_id comes from workshop.job.id. Each request
+        uses view_id and the VIEW expected_revision, never draft.revision.
+        Preview costs/allowance first with preview_workshop_generation().
+        """
         if scope not in ('series','episodes','worlds'):raise ValueError('Choose series, episodes or worlds.')
         return self.request('filmmaking/'+scope+'/'+identity+'/generate','POST',dict(job_id=job_id,requests=requests,model=model,approved=approved),idempotency_key)
-    def confirm_workshop_image(self,view,asset_id,*,approved=False,image_layout='main'):
-        return self.request('filmmaking/assets/'+view['id']+'/confirm','POST',dict(expected_revision=view['revision'],asset_id=asset_id,approved=approved,image_layout=image_layout))
-    def preview_image_bible_change(self,view,entity,asset_id,changes,*,image_layout='main'):
-        return self.request('filmmaking/assets/'+view['id']+'/bible-change-preview','POST',dict(expected_revision=view['revision'],expected_entity_revision=entity['revision'],asset_id=asset_id,changes=changes,image_layout=image_layout))
+    def preview_workshop_generation(self,identity,job_id,requests,*,scope='series',model='gpt-image-2'):
+        """Read-only paid-step preview with allowance; ids/revisions match generate_workshop."""
+        if scope not in ('series','episodes','worlds'):raise ValueError('Choose series, episodes or worlds.')
+        return self.request('filmmaking/'+scope+'/'+identity+'/generation-preview','POST',dict(job_id=job_id,requests=requests,model=model))
+    def refresh_storybook_links(self,episode_id,expected_revision):
+        """Explicitly refresh linked entity snapshots using the Storybook revision; scripts/media stay fixed."""
+        return self.request('filmmaking/episodes/'+episode_id+'/storybook/refresh-links','POST',dict(expected_revision=expected_revision))
+    def production_readiness(self,episode_id):
+        """Read every linked entity's frozen confirmed image, missing-image flag and source-change badge."""
+        return self.request('filmmaking/episodes/'+episode_id+'/storybook/readiness')
+    def rename_image_candidate(self,view,candidate,title):
+        """Correct a candidate title/filename using view and candidate-review revisions."""
+        return self.request('filmmaking/assets/'+view['id']+'/rename-candidate','POST',dict(expected_revision=view['revision'],expected_review_revision=candidate.get('review_revision',0),asset_id=candidate['id'],title=title))
+    def confirm_workshop_image(self,view,asset_id,*,approved=False,image_layout=None):
+        """Confirm a candidate with the view revision; omitted layout keeps its generation layout."""
+        return self.request('filmmaking/assets/'+view['id']+'/confirm','POST',dict(expected_revision=view['revision'],asset_id=asset_id,approved=approved,**({'image_layout':image_layout} if image_layout else {})))
+    def preview_image_bible_change(self,view,entity,asset_id,changes,*,image_layout=None):
+        return self.request('filmmaking/assets/'+view['id']+'/bible-change-preview','POST',dict(expected_revision=view['revision'],expected_entity_revision=entity['revision'],asset_id=asset_id,changes=changes,**({'image_layout':image_layout} if image_layout else {})))
     def confirm_image_bible_change(self,view_id,preview_id,*,approved=False):
         return self.request('filmmaking/assets/'+view_id+'/bible-change-confirm','POST',dict(preview_id=preview_id,approved=approved,authored_by='agent'))
     def clear_entity_approval(self,record):
@@ -278,6 +297,10 @@ class StudioClient(SongClient):
         return self.request('image-studio/jobs/'+identity+'/resume','POST',{})
 
     def download_image_candidate(self,identity,asset_id,destination):
+        """Download candidate bytes with agent authentication: identity is its IMAGE JOB id.
+        asset_id is outputs[].id; destination is a local path. Browser /api/assets URLs
+        need a session or Bearer header and are not standalone public download links.
+        """
         Path(destination).write_bytes(self.request('image-studio/jobs/'+identity+'/outputs/'+asset_id))
         return str(Path(destination).resolve())
 

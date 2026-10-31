@@ -62,7 +62,7 @@ class SeriesBuilderTests(unittest.TestCase):
             _,body,_=self.app.images.compile(record)
             self.assertIn(appearance,body['prompt']);self.assertIn(bible['answers']['style'],body['prompt'])
         changed=appearance+' A narrow scar on his right cheek.'
-        updated=self.f.workshop.edit(hero['id'],dict(expected_revision=hero['revision'],profile={**hero['profile'],'description':changed},description=hero['description']))
+        updated=self.f.workshop.edit(hero['id'],dict(expected_revision=hero['revision'],profile={**hero['profile'],'description':changed},description=hero['description'],refresh_view_ids=[view['id']]))
         self.assertEqual(updated['profile']['description'],changed)
         self.assertIn(changed,self.app.images.draft(view['draft_id'])['settings']['prompt'])
         self.assertEqual(self.s.bible(self.pid)['guide']['cast'][0]['description'],appearance,'Visual refinement preserves the original Bible card')

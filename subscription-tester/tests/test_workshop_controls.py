@@ -64,7 +64,10 @@ class WorkshopControlTests(unittest.TestCase):
                     with patch.object(self.app,'spawn') as spawn:
                         reopened=self.s.workshop(scope,identity,dict(expected_revision=document['revision']));spawn.assert_not_called()
                     view=next(v for v in reopened['views'] if v['id']==view['id'])
-                    self.assertIsNone(view['draft']['settings']['base']);self.assertIsNone(view['draft']['settings']['edit_region'])
+                    self.assertEqual(view['draft']['settings']['base'],{'asset_id':original['id']},'Opening the workshop preserves unselected drafts')
+                    prepared=self.w.prompt_draft(view['id'],dict(expected_revision=view['revision'],model='gpt-image-2'))
+                    view=self.w.view(self.p.get(view['id'],'world-asset'))
+                    self.assertIsNone(prepared['draft']['settings']['base']);self.assertIsNone(prepared['draft']['settings']['edit_region'])
                     self.assertEqual([x['asset_id'] for x in view['draft']['settings']['extras']],sources)
                     self.assertEqual(self.app.images.db['jobs'],history);self.assertEqual(self.app.assets,assets)
                     self.assertTrue(set(versions).issubset(set(self.p.sql.execute('SELECT id,revision,body FROM versions'))))
@@ -103,7 +106,8 @@ class WorkshopControlTests(unittest.TestCase):
             asset=self.app.asset(original['id'])[0];asset.update(review_state='rejected',approved=False)
             history=copy.deepcopy(self.app.images.db['jobs'])
             self.w.edit(e['id'],dict(expected_revision=e['revision'],profile={**e['profile'],'reference_ids':inspiration}))
-            self.assertIsNone(d['settings']['base']);self.assertIsNone(d['settings']['edit_region'])
+            self.assertEqual(d['settings']['base'],{'asset_id':original['id']},'An entity save never repairs an unrelated draft implicitly')
+            self.assertEqual(d['settings']['edit_region'],region)
             # Generation must repair legacy settings even without editing details first.
             d['settings'].update(base={'asset_id':original['id']},edit_region=region)
             with patch.object(self.app,'spawn'):
@@ -137,7 +141,9 @@ class WorkshopControlTests(unittest.TestCase):
                 current=next(e for e in result['entities'] if e['id']==entity['id'])
                 self.assertEqual(current['identity_asset_id'],edited['id'])
                 self.assertEqual({o['id'] for o in next(v for v in result['views'] if v['id']==view['id'])['outputs']},{original['id'],edited['id']})
-                self.assertEqual(self.s.book(self.eid),frozen)
+                current_book=self.s.book(self.eid)
+                self.assertEqual({k:v for k,v in current_book.items() if k!='linked_entities'},{k:v for k,v in frozen.items() if k!='linked_entities'})
+                self.assertTrue(current_book['linked_entities'][0]['source_changed'])
                 self.assertEqual(self.w.return_image(view['id'],body),result,'Retrying a return is idempotent')
                 self.assertTrue(self.app.asset(original['id'])[1].exists())
 

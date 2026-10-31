@@ -69,7 +69,7 @@ def contracts(paths, operation):
     add('/filmmaking/entities/{id}/workshop','get','Read owning workshop without changing saved work',None,ref('WorkshopSnapshot'))
     revision_body=body({'expected_revision':REVISION},('expected_revision',))
     add('/filmmaking/entities/{id}/clear-approval','post','Clear main entity approval when idle; preserve saved references and history',revision_body,ref('WorkshopSnapshot'))
-    add('/filmmaking/assets/{id}','put','Rename an optional sheet or coverage view',body({'expected_revision':REVISION,'title':{'type':'string','minLength':1,'maxLength':80}},('expected_revision','title')),ref('WorkshopSnapshot'))
+    add('/filmmaking/assets/{id}','put','Rename an optional view or explicitly set this view image ratio',body({'expected_revision':REVISION,'ratio':{'type':'string'},'title':{'type':'string','minLength':1,'maxLength':80}},('expected_revision',)),ref('WorkshopSnapshot'))
     add('/filmmaking/assets/{id}/clear-approval','post','Clear optional view approval when idle',revision_body,ref('WorkshopSnapshot'))
     add('/filmmaking/assets/{id}/return-image','post','Adopt an approved edit belonging to this view; otherwise return unchanged snapshot',body({'expected_revision':REVISION,'job_id':STRING,'asset_id':STRING},('expected_revision','job_id','asset_id')),ref('WorkshopSnapshot'))
     # Two independent revision domains: view record and candidate review state.

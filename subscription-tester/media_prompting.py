@@ -456,7 +456,8 @@ class MediaPrompting:
     def latest(self, kind, identity):
         record = self.record(kind, identity)
         jobs = [j for j in self.p.all('media-prompt-job') if j['kind'] == kind and j['media_id'] == identity and j['mock'] == self.app.mock]
-        return dict(current=self.current(kind, record), job=self.public(jobs[-1]) if jobs else None,
+        from workflow_tools import usage
+        return dict(current=self.current(kind, record), usage=usage(self.app), job=self.public(jobs[-1]) if jobs else None,
             model=self.settings(kind, record)['model'], provenance=copy.deepcopy(record.get('prompt_preparation')))
 
     def prepare(self, kind, identity, data, key):

@@ -280,6 +280,8 @@ class ImageStudio:
         return {**copy.deepcopy(review), 'current': self.manual_review_current(record)}
 
     def validate(self, record):
+        from workflow_tools import usage
+        allowance=usage(self.app)
         try:
             endpoint,body,count=self.compile(record)
             warnings=['Visual consistency requires review; identical appearance is not guaranteed.']
@@ -291,10 +293,10 @@ class ImageStudio:
                 if requested!='auto':
                     a,b=map(float,requested.split(':'))
                     if abs(width/height-a/b)>.01: warnings.append('Selected pixel dimensions control the output shape; aspect-ratio guidance differs from that size.')
-            return dict(valid=True,errors=[],endpoint=endpoint,request=body,source_count=count,billing=IMAGE_MODELS[body['model']]['billing'],transport='Codex app-server (compiled scene; native tool call occurs during generation)' if body['model']=='gpt-image-2' else 'multipart/form-data' if body.get('images') and body['model'] in openai_images.API_MODELS else 'JSON',expanded_prompt_chars=len(body['prompt']),warnings=warnings,
+            return dict(valid=True,errors=[],usage=allowance,endpoint=endpoint,request=body,source_count=count,billing=IMAGE_MODELS[body['model']]['billing'],transport='Codex app-server (compiled scene; native tool call occurs during generation)' if body['model']=='gpt-image-2' else 'multipart/form-data' if body.get('images') and body['model'] in openai_images.API_MODELS else 'JSON',expanded_prompt_chars=len(body['prompt']),warnings=warnings,
                 prompt_preparation_current=self.app.prompting.current('image',record) or self.manual_review_current(record),prompt_provenance=copy.deepcopy(record.get('prompt_preparation')),
                 prompt_review_provenance=self.review_provenance(record))
-        except ValueError as e: return dict(valid=False,errors=[str(e)])
+        except ValueError as e: return dict(valid=False,errors=[str(e)],usage=allowance)
 
     def generate(self, identity, data, key):
         record=self.draft(identity)
@@ -332,7 +334,9 @@ class ImageStudio:
         else: raise ValueError('Unsupported image output format.')
         identity=uuid.uuid4().hex;path=self.app.storage/'assets'/f'{identity}.{ext}'
         path.parent.mkdir(parents=True,exist_ok=True,mode=0o700);path.write_bytes(raw);path.chmod(0o600)
-        asset=dict(id=identity,name=('Mock · ' if job['mock'] else '')+job['draft']['title'].replace('Character sheet','Main image')+'.'+ext,ext=ext,mime=mime,bytes=len(raw),src='/api/assets/'+identity,
+        layout=job['draft'].get('image_layout')
+        title=job['draft']['title'] if layout else job['draft']['title'].replace('Character sheet','Main image')
+        asset=dict(id=identity,name=('Mock · ' if job['mock'] else '')+title+'.'+ext,image_layout=layout or 'main',ext=ext,mime=mime,bytes=len(raw),src='/api/assets/'+identity,
                    generated=True,image_job_id=job['id'],approved=False,mock=job['mock'])
         if ext=='png' and len(raw)>=24:
             asset['width'],asset['height']=struct.unpack('>II',raw[16:24])

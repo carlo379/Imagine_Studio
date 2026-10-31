@@ -24,10 +24,10 @@ def context(w,view_id,data):
 def preview(w,view_id,data):
     view,e,candidate,book=context(w,view_id,data)
     if w.view(view)['pending']:raise APIError('busy','Wait for this reference generation to finish before updating the Bible.',409)
-    if data.get('image_layout','main') not in ('main','front','side','back','head','character_sheet'):raise APIError('invalid_layout','Choose the actual image layout.')
+    if data.get('image_layout',candidate.get('image_layout','main')) not in ('main','front','side','back','head','character_sheet'):raise APIError('invalid_layout','Choose the actual image layout.')
     changes=data.get('changes')
-    if not isinstance(changes,dict) or not changes or any(k not in e['profile'] or k in ('id','name','reference_ids','palette','series_asset_id') or not isinstance(v,str) for k,v in changes.items()):
-        raise APIError('invalid_changes','Supply changed descriptive profile fields only.')
+    if not isinstance(changes,dict) or not changes or any(k not in e['profile'] or k in ('id','name','palette','series_asset_id') or (not isinstance(v,list) if k=='reference_ids' else not isinstance(v,str)) for k,v in changes.items()):
+        raise APIError('invalid_changes','Supply descriptive profile fields or reference_ids (up to five available approved image ids).')
     key={'Character':'cast','Location':'places','Prop':'props'}[e['category']]
     guide=copy.deepcopy(book.get('guide',{}))
     card=next((c for c in guide.get(key,[]) if c['id']==e.get('source_card_id') or (not e.get('source_card_id') and c['name']==e['name'])),None)
@@ -35,11 +35,11 @@ def preview(w,view_id,data):
     diffs=[dict(field=k,before=e['profile'].get(k,''),bible_before=card.get(k,''),after=v) for k,v in changes.items() if v!=e['profile'].get(k) or v!=card.get(k)]
     if not diffs:raise APIError('no_changes','The proposed fields already match the Bible.')
     card.update(changes)
-    guide=w.f.series.guide(guide) if e.get('scope') else w.normalize_guide(guide)
+    guide=w.f.series.guide(guide,candidate_asset_id=candidate['id']) if e.get('scope') else w.normalize_guide(guide,candidate_asset_id=candidate['id'])
     with w.p.sql:return w.p.new('image-bible-preview',view_id=view_id,entity_id=e['id'],asset_id=candidate['id'],
         view_revision=view['revision'],entity_revision=e['revision'],review_revision=candidate.get('review_revision',0),
         book_id=book['id'],book_revision=book['revision'],changes=changes,diff=diffs,guide=guide,
-        image_layout=data.get('image_layout','main'),status='preview',source='image')
+        image_layout=data.get('image_layout',candidate.get('image_layout','main')),status='preview',source='image')
 
 
 @contextmanager
@@ -66,12 +66,15 @@ def confirm(w,view_id,data):
     view,e,candidate,book=context(w,view_id,{**data,'asset_id':proposal['asset_id'],'expected_revision':proposal['view_revision'],'expected_entity_revision':proposal['entity_revision']})
     if book['id']!=proposal['book_id'] or book['revision']!=proposal['book_revision'] or candidate.get('review_revision',0)!=proposal['review_revision']:
         raise APIError('revision_conflict','The Bible or image review changed. Preview again.',409)
+    if e.get('scope'):w.f.series.guide(proposal['guide'],candidate_asset_id=candidate['id'])
+    else:w.normalize_guide(proposal['guide'],candidate_asset_id=candidate['id'])
     # Validate the ordinary confirmation before changing descriptive data.
     with image_change_mutation(w,candidate['id']):
         w.confirm(view_id,dict(expected_revision=view['revision'],asset_id=candidate['id'],approved=True,image_layout=proposal['image_layout']),coordinated=True)
         e=w.entity(e['id']);profile={**e['profile'],**proposal['changes']}
         description=e['description']
         for field,value in proposal['changes'].items():
+            if not isinstance(value,str):continue
             description=description.replace(field.replace('_',' ').title()+': '+str(e['profile'].get(field,'')),field.replace('_',' ').title()+': '+value)
         e.update(profile=profile,description=description,revision=e['revision']+1)
         if e.get('scope'):e['source_card_snapshot']=next(c for c in proposal['guide'][{'Character':'cast','Location':'places','Prop':'props'}[e['category']]] if c['id']==e['source_card_id'])

@@ -61,7 +61,7 @@ def contracts(paths,operation):
     request('/filmmaking/series/{id}/library','post',{'reference_id':S},('reference_id',))
     request('/filmmaking/series/{id}/library/promote','post',{'entity_id':S,'expected_revision':R},('entity_id','expected_revision'))
     for path in ('/filmmaking/worlds/{id}/workshop','/filmmaking/series/{id}/workshop','/filmmaking/episodes/{id}/workshop'):request(path,'post',{'expected_revision':zero,'job_id':S,'model':S},('expected_revision',))
-    generation={'job_id':S,'approved':approved,'model':S,'requests':{**array(obj({'view_id':S,'expected_revision':R,'prompt':S,'reviewed':boolean,'authored_by':{'enum':['human','agent']},'character_sheet':boolean},('view_id','expected_revision'))),'minItems':1}}
+    generation={'job_id':S,'approved':approved,'model':S,'requests':{**array(obj({'view_id':S,'expected_revision':R,'prompt':S,'reviewed':boolean,'authored_by':{'enum':['human','agent']},'character_sheet':boolean,'image_layout':{'enum':['main','front','side','back','head','character_sheet']}},('view_id','expected_revision'))),'minItems':1}}
     for kind in ('worlds','series','episodes'):request('/filmmaking/'+kind+'/{id}/generate','post',generation,('job_id','approved','requests'))
     writing={'expected_revision':zero,'expected_episode_revision':R,'approved':approved,'provider':{'enum':['codex','grok']},'image_model':S,'video_model':S,'allow_dialogue_polish':boolean,'revision_of':S,'expected_job_revision':R,'scene_index':zero,'instruction':S}
     for action in ('plan','complete-production','storyboard'):request('/filmmaking/episodes/{id}/'+action,'post',writing,('expected_revision','expected_episode_revision','approved'))
@@ -74,7 +74,7 @@ def contracts(paths,operation):
     request('/filmmaking/episodes/{id}/refresh-assets','post',{'expected_revision':zero,'expected_episode_revision':R,'approved':approved,'allow_completed':boolean,'shots':{**array(obj({'id':S,'expected_revision':R},('id','expected_revision'))),'minItems':1,'maxItems':100}},('expected_revision','expected_episode_revision','approved','shots'))
     request('/filmmaking/worlds/{id}/workshop','post',{'job_id':S,'expected_revision':R,'model':S},('job_id','expected_revision'))
     request('/filmmaking/worlds/{id}/reference','post',{'name':S,'data_url':S},('data_url',))
-    request('/filmmaking/entities/{id}','put',{'expected_revision':R,'profile':card,'description':{'type':'string','maxLength':10000}},('expected_revision',))
+    request('/filmmaking/entities/{id}','put',{'expected_revision':R,'profile':card,'description':{'type':'string','maxLength':10000},'refresh_view_ids':array(S)},('expected_revision',))
     request('/filmmaking/entities/{id}/views','post',{'expected_revision':R,'model':S,'views':array(obj({'label':S,'details':S},('label',)))},('expected_revision','views'))
     request('/filmmaking/entities/{id}/upload','post',{'expected_revision':R,'asset_id':S},('expected_revision','asset_id'))
     request('/filmmaking/assets/{id}/confirm','post',{'expected_revision':R,'asset_id':S,'approved':approved,'image_layout':{'enum':['main','front','side','back','head','character_sheet']}},('expected_revision','asset_id','approved'))

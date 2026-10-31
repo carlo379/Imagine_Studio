@@ -14,7 +14,7 @@ from world_workshop import CAST, PLACE
 from video_rules import VOICES
 import prompt_guides
 
-ANSWERS = {'title':120,'idea':6000,'genre':120,'tone':240,'theme':1000,'audience':240,'duration':120,'characters':6000,'locations':4000,'plot':6000,'style':2000,'rules':4000}
+ANSWERS = {'title':120,'idea':6000,'genre':120,'tone':240,'theme':1000,'audience':240,'duration':120,'characters':6000,'locations':4000,'plot':6000,'style':2000,'rules':4000,'aspect_ratio':20}
 PROP = {'name':80,'description':10000,'purpose':10000,'details':10000}
 
 
@@ -39,9 +39,10 @@ class SeriesBuilder:
 
     def answers(self, value, episode=False):
         if not isinstance(value,dict) or set(value)-set(ANSWERS):raise APIError('invalid_book','Check the storybook fields.')
+        if value.get('aspect_ratio') and value['aspect_ratio'] not in ('16:9','9:16','1:1','3:2','2:3'):raise APIError('invalid_ratio','Choose 16:9, 9:16, 1:1, 3:2 or 2:3.')
         return {k:text(value.get(k,''),6000 if episode and k=='theme' else limit,k.title()) for k,limit in ANSWERS.items()}
 
-    def guide(self, value):
+    def guide(self, value, *, candidate_asset_id=None):
         if not isinstance(value,dict) or set(value)-{'cast','places','props','acts','script'}:raise APIError('invalid_guide','Check the book cards.')
         script=value.get('script','');text(script,60000,'Script')
         out={'script':script}
@@ -57,7 +58,7 @@ class SeriesBuilder:
                 if key=='cast' and item['voice_preset'] and item['voice_preset'] not in VOICES:raise APIError('invalid_voice','Choose a documented voice preset.')
                 refs=card.get('reference_ids',[])
                 if not isinstance(refs,list) or len(refs)>5:raise APIError('guide_limit','Use up to five inspiration images per card.')
-                for ref in refs:self.w.safe_asset(ref)
+                for ref in refs:self.w.safe_asset(ref,allow_candidate=candidate_asset_id)
                 item['reference_ids']=list(refs)
                 palette=card.get('palette',[])
                 if not isinstance(palette,list) or len(palette)>6 or any(not isinstance(c,str) or not re.fullmatch('#[0-9a-fA-F]{6}',c) for c in palette):raise APIError('invalid_palette','Use up to six hex colors.')
@@ -127,6 +128,8 @@ class SeriesBuilder:
         result={**copy.deepcopy(r),'script_options':copy.deepcopy(r.get('script_options',{'allow_dialogue_polish':False})),'episode':episode,'script_drafts':[copy.deepcopy(d) for d in self.p.all('episode-script-draft') if d['episode_id']==eid]}
         # The episode's title is authoritative across the script and book tools.
         result['answers']['title']=episode['title']
+        from storybook_links import links
+        result['linked_entities']=links(self,result)
         return result
 
     def library(self, pid, eid=None):
@@ -169,6 +172,18 @@ class SeriesBuilder:
             old={a['id']:a for a in inherited['assets']}
             selection=self.inheritance(r['production_id'],eid,[i for i in ids if i not in old]);fresh={a['id']:a for a in selection['assets']}
             inherited=copy.deepcopy(inherited);inherited['assets']=[copy.deepcopy(old[i] if i in old else fresh[i]) for i in ids]
+        # Guide-card links use the same frozen snapshots as selected library ids.
+        # Capture only newly linked ids; existing snapshots never refresh on save.
+        linked=list(dict.fromkeys(ids+[c['series_asset_id'] for group in ('cast','places','props') for c in guide.get(group,[]) if c.get('series_asset_id')]))
+        held={a['id']:a for a in inherited['assets']}
+        if data.get('refresh_inheritance') is not True:
+            for asset in (r.get('inheritance') or {}).get('assets',[]):
+                if asset['id'] in linked:held.setdefault(asset['id'],copy.deepcopy(asset))
+        new_links=[identity for identity in linked if identity not in held]
+        if new_links:
+            captured=self.inheritance(r['production_id'],eid,new_links)
+            held.update({a['id']:a for a in captured['assets']})
+        inherited=copy.deepcopy(inherited);inherited['assets']=[held[identity] for identity in linked]
         episode=r['episode']
         with self.f.asset_mutation():
             if answers['title'] and answers['title']!=episode['title']:
@@ -210,14 +225,6 @@ class SeriesBuilder:
                     self.w.new_view(e,'portrait' if category=='Character' else 'prop' if category=='Prop' else 'location','Identity portrait' if category=='Character' else 'Main reference',model)
                 else:self.merge_card(e,card)
             j['result']['visual_style']=style;j.update(world_revision=book['revision'],revision=j['revision']+1);self.p.put('world-job',j)
-            for view in self.p.all('world-asset'):
-                if view['world_job_id']!=j['id'] or view.get('selected_asset_id'):continue
-                e=self.p.get(view['entity_id'],'world-entity');draft=self.app.images.draft(view['draft_id'])
-                settings=self.w.prepare_settings(e,view,draft)
-                if settings!=draft['settings']:
-                    try:self.app.images.edit(draft['id'],dict(expected_revision=draft['revision'],settings=settings))
-                    except APIError as error:
-                        raise APIError(error.code,f"Could not open development for {e['category'].lower()} {e['name']}: {error}",error.status) from error
         return self.w.snapshot(book['production_id'],j['id'])
 
     def link_reference(self, pid, data):
@@ -566,11 +573,16 @@ class SeriesBuilder:
             if action=='workshop':
                 if method=='GET':return 200,self.workshop('series-bible',pid)
                 if method=='POST':return 200,self.workshop('series-bible',pid,data)
-            if action=='generate' and method=='POST':
+            if action in ('generate','generation-preview') and method=='POST':
                 j=self.w.job(pid,data.get('job_id'))
-                if j.get('scope')!='series-bible':raise APIError('invalid_plan','Choose the Series Bible workshop.')
+                if j.get('scope')!='series-bible':raise APIError('invalid_plan','Choose the Series Bible workshop job_id.')
+                if action=='generation-preview':return 200,self.w.generation_preview(pid,data)
                 return 202,self.w.generate(pid,data,key)
         if len(parts)==4 and parts[0]=='series' and parts[2:] == ['library','promote'] and method=='POST':return 200,self.promote(parts[1],data)
+        if len(parts)==4 and parts[0]=='episodes' and parts[2]=='storybook':
+            from storybook_links import refresh,readiness
+            if parts[3]=='refresh-links' and method=='POST':return 200,refresh(self,parts[1],data)
+            if parts[3]=='readiness' and method=='GET':return 200,readiness(self,parts[1])
         if len(parts)==3 and parts[0]=='episodes':
             eid=parts[1];action=parts[2];pid=self.episode(eid)[0]['id']
             if action=='book.pdf' and method=='GET':return 200,self.export_pdf('episode-book',eid)
@@ -581,9 +593,10 @@ class SeriesBuilder:
             if action=='workshop':
                 if method=='GET':return 200,self.workshop('episode-book',eid)
                 if method=='POST':return 200,self.workshop('episode-book',eid,data)
-            if action=='generate' and method=='POST':
+            if action in ('generate','generation-preview') and method=='POST':
                 j=self.w.job(pid,data.get('job_id'))
-                if j.get('scope')!='episode-book' or j.get('episode_id')!=eid:raise APIError('invalid_plan','Choose this episode workshop.')
+                if j.get('scope')!='episode-book' or j.get('episode_id')!=eid:raise APIError('invalid_plan','Choose this episode workshop job_id.')
+                if action=='generation-preview':return 200,self.w.generation_preview(pid,data)
                 return 202,self.w.generate(pid,data,key)
             if action=='jobs' and method=='GET':return 200,self.jobs(eid)
             if action=='plan' and method=='POST':return 202,self.plan(eid,data,key)

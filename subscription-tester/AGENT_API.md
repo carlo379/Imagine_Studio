@@ -224,3 +224,8 @@ Image-to-Bible updates require a stored preview and explicit confirmation; norma
 image approval preserves the Bible. Series routes accept production or series IDs.
 See [the reference](AGENT_API_REFERENCE.md#workshop-prompts-image-sourced-bible-changes-and-grok-usage)
 for request examples, SDK helpers, layout naming and observed Grok rate limits.
+
+
+For Storybook stale-link badges, explicit refresh, production readiness, paid-step
+previews with allowance status, candidate rename and exact ID/revision rules, see
+[End-to-end operations](AGENT_API_REFERENCE.md#end-to-end-storybook-and-workshop-operations).

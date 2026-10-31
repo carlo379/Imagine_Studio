@@ -29,7 +29,7 @@ class WorldWorkshop:
                     batch.update(status='error',error='Generation was interrupted. Completed images are saved; remaining requests were not sent.',revision=batch['revision']+1)
                     self.p.put('world-render',batch)
 
-    def normalize_guide(self,g):
+    def normalize_guide(self,g,*,candidate_asset_id=None):
         if not isinstance(g,dict) or set(g)-{'cast','places','acts','script'}:raise APIError('invalid_guide','Check the story cards.')
         out={'script':text(g.get('script',''),60000,'Imported script')}
         for key,limits,max_count in [('cast',CAST,8),('places',PLACE,4),('acts',{'title':120,'text':6000},8)]:
@@ -42,7 +42,7 @@ class WorldWorkshop:
                 item['id']=text(entry.get('id',''),80,'Card id',True)
                 refs=entry.get('reference_ids',[])
                 if not isinstance(refs,list) or len(refs)>5:raise APIError('guide_limit','Use up to five inspiration images per card.')
-                for identity in refs:self.safe_asset(identity)
+                for identity in refs:self.safe_asset(identity,allow_candidate=candidate_asset_id)
                 item['reference_ids']=refs
                 palette=entry.get('palette',[])
                 if not isinstance(palette,list) or len(palette)>6 or any(not isinstance(c,str) or not re.fullmatch('#[0-9a-fA-F]{6}',c) for c in palette):raise APIError('invalid_palette','Use up to six hex colors.')
@@ -50,12 +50,12 @@ class WorldWorkshop:
                 out[key].append(item)
         return out
 
-    def safe_asset(self,identity):
+    def safe_asset(self,identity,*,allow_candidate=None):
         if not isinstance(identity,str):raise APIError('invalid_reference','Choose a local reference image.')
         asset,path=self.app.asset(identity)
         from candidate_review import available
         available(asset)
-        if asset.get('generated') and not asset.get('approved'):raise APIError('review_required','Review the generated reference first.',403)
+        if asset.get('generated') and not asset.get('approved') and identity!=allow_candidate:raise APIError('review_required','Review the generated reference first.',403)
         from PIL import Image
         try:
             with Image.open(path) as im:
@@ -90,12 +90,17 @@ class WorldWorkshop:
         # prioritize appearance and omit whole oversized fields explicitly.
         return profile_description(profile)
 
+    def resolve_production(self,identity):
+        matches=[p for p in self.p.all('production') if identity in (p['id'],p.get('series_id'))]
+        if len(matches)!=1:raise APIError('not_found','Supply a production id or its linked series id for this workshop.',404)
+        return self.f.production(matches[0]['id'])['id']
+
     def job(self,pid,identity=None):
         self.f.production(pid)
         jobs=[j for j in self.p.all('world-job') if j['production_id']==pid and j['mock']==self.app.mock and j['status']=='done']
         if not identity:jobs=[j for j in jobs if not j.get('scope')]
         j=next((j for j in jobs if j['id']==identity),None) if identity else (jobs[-1] if jobs else None)
-        if not j:raise APIError('not_ready','Build and review your story first.',409)
+        if not j:raise APIError('not_ready',f'No completed workshop job matches production {pid}. Supply job_id from the series/episode workshop response; the entity, series, view and draft ids are not job ids.',409)
         return j
 
     def entity(self,identity):
@@ -116,7 +121,32 @@ class WorldWorkshop:
     def settings(self,model,prompt,ratio='16:9',refs=None):
         return {**copy.deepcopy(DEFAULTS),'model':self.model(model),'prompt':prompt,'ratio':ratio,'quality':'auto' if model in ('gpt-image-2','grok-imagine-image-2.0') else 'low','resolution':'auto' if model=='gpt-image-2' else '1k','extras':[{'asset_id':r} for r in refs or []]}
 
-    def prompt(self,e,kind,label,details=''):
+    @staticmethod
+    def aspect_text(value,ratio):
+        # Rendering aspect is structured, never a conflicting style instruction.
+        from image_studio import IMAGE_RATIOS
+        ratios='|'.join(re.escape(r) for r in sorted(IMAGE_RATIOS,key=len,reverse=True) if r!='auto')
+        return re.sub(r'(?i)(?:(?:vertical|horizontal|portrait|landscape)\s+)?\b(?:'+ratios+r')\b',ratio,value)
+
+    def default_ratio(self,e,kind):
+        if e['category']=='Character' and kind in ('portrait','sheet'):return '3:2'
+        job=self.job(e['production_id'],e['world_job_id'])
+        if job.get('scope')=='series-bible':book=self.f.series.bible(e['production_id'])
+        elif job.get('scope')=='episode-book':book=self.f.series.book(e['episode_id'])
+        else:book=self.f.world(e['production_id'])
+        answers=book.get('answers',{})
+        inherited=(book.get('inheritance') or {}).get('answers',{}) if job.get('scope')=='episode-book' else {}
+        ratio=answers.get('aspect_ratio') or inherited.get('aspect_ratio')
+        if not ratio:
+            match=re.search(r'(?<!\d)(9:16|16:9|1:1|3:2|2:3)(?!\d)',answers.get('style','') or inherited.get('style',''))
+            ratio=match[1] if match else '16:9'
+        return ratio
+
+    def check_view(self,view,data):
+        if data.get('expected_revision')!=view['revision']:
+            raise APIError('revision_conflict',f"expected_revision must be the VIEW revision for {view['id']}; current is {view['revision']}. The image draft revision is separate.",409)
+
+    def prompt(self,e,kind,label,details='',ratio=None):
         j=self.job(e['production_id'],e['world_job_id'])
         if e['category']=='Character' and kind in ('portrait','sheet'):
             # Reserve space for every view and outfit instruction. Narrative
@@ -145,9 +175,23 @@ class WorldWorkshop:
             parts.append('No captions, labels or watermarks.')
             return '\n'.join(parts)
         fields=e.get('profile',{})
-        lighting='Lighting: '+fields['lighting'][:1000]+'\n' if e['category']=='Location' and fields.get('lighting') else ''
-        profile=self.description({k:v for k,v in fields.items() if not (lighting and k=='lighting')})
-        base=f"{e['category']} reference: {e['name']}.\n{lighting}{e['description'][:1000]}\n{profile[:1000]}\nLook: {j['result']['visual_style'][:400]}.\n"
+        # A display summary may already contain the same structured fields.
+        # Prefer the structured value and emit each semantic line once.
+        lines=[f"{e['category']} reference: {e['name'].rstrip('.!? ')}."]
+        labels={field.replace('_',' ').title():str(value).strip().rstrip('.!? ') for field,value in fields.items() if isinstance(value,str) and value.strip() and field not in ('id','name','series_asset_id')}
+        summary=[]
+        for line in e.get('description','').splitlines():
+            label,sep,value=line.partition(':')
+            if sep and label.strip() in labels:continue
+            normalized=line.strip().rstrip('.!? ')
+            if normalized and normalized not in labels.values() and normalized not in summary:summary.append(normalized)
+        lines.extend(summary)
+        lines.extend(label+': '+value for label,value in labels.items())
+        ratio=ratio or self.default_ratio(e,kind)
+        style=self.aspect_text(j['result']['visual_style'][:400],ratio).rstrip('.!? ')
+        if style:lines.append('Look: '+style+'.')
+        lines.append('Aspect ratio: '+ratio+'.')
+        base='\n'.join(dict.fromkeys(lines))+'\n'
         if kind in ('portrait','sheet'):
             layout='Create one polished character reference sheet with exactly four clearly separated views: full body front, full body rear (back), full body side, and a head close-up of the face. Do not add a three-quarter or fifth view. Same character, face, proportions, clothing and colors in every view. Neutral standing poses, full figures uncropped, generous spacing on a simple neutral background. '
             if kind=='sheet':layout+='Preserve the identity in the supplied reference. Outfit: '+details+'\n'
@@ -167,7 +211,8 @@ class WorldWorkshop:
         if kind in ('sheet','coverage'):
             if not e.get('identity_asset_id'):raise APIError('identity_required','Confirm the main reference before creating variations.',409)
             refs=[e['identity_asset_id']]
-        draft=self.app.images.create(dict(title=(e['name']+' · '+label)[:120],settings=self.settings(model,self.prompt(e,kind,label,details),'3:2' if kind in ('portrait','sheet') else '16:9',refs)))
+        ratio=self.default_ratio(e,kind)
+        draft=self.app.images.create(dict(title=(e['name']+' · '+label)[:120],settings=self.settings(model,self.prompt(e,kind,label,details,ratio=ratio),ratio,refs)))
         return self.p.new('world-asset',world_job_id=e['world_job_id'],production_id=e['production_id'],entity_id=e['id'],media_production_id=None,shot_id=None,draft_id=draft['id'],name=e['name'],category=e['category'],description=e['description'],view=label,kind=kind,details=details,reference_id=None,existing_reference_id=None,selected_asset_id=None)
 
     def start(self,pid,data):
@@ -272,7 +317,7 @@ class WorldWorkshop:
         draft=copy.deepcopy(self.app.images.draft(r['draft_id']))
         draft['prompt_preparation_current']=self.prompt_ready(draft)
         batches=[b for b in self.p.all('world-render') if b['mock']==self.app.mock and b['status']=='pending' and r['id'] in b['view_ids']]
-        recommended=self.prompt(entity,r['kind'],r['view'],r.get('details','')) if entity and r['kind'] in ('portrait','sheet','location','prop') else draft['settings']['prompt']
+        recommended=self.prompt(entity,r['kind'],r['view'],r.get('details',''),ratio=draft['settings']['ratio']) if entity and r['kind'] in ('portrait','sheet','location','prop') else draft['settings']['prompt']
         if draft['prompt_preparation_current']:recommended=draft['settings']['prompt']
         attempts=[dict(id=j['id'],error=j.get('message') or 'Image generation failed.',model=j.get('model'),error_kind=j.get('error_kind'),dismissed=j['id'] in r.get('dismissed_attempt_ids',[])) for j in jobs if j['status']=='error']
         # Interrupted/cancelled batches can fail before an image job exists.
@@ -286,7 +331,7 @@ class WorldWorkshop:
     def review_attempt(self,identity,data):
         view=self.p.get(identity,'world-asset');self.job(view['production_id'],view['world_job_id'])
         with self.p.mutation():
-            self.p.check(view,data)
+            self.check_view(view,data)
             ids=data.get('attempt_ids');action=data.get('action')
             if action not in ('dismiss','restore') or not isinstance(ids,list) or not ids or len(ids)>1000 or any(not isinstance(i,str) for i in ids):
                 raise APIError('invalid_review','Choose failed attempts to dismiss or restore.')
@@ -328,13 +373,13 @@ class WorldWorkshop:
                 discard_base=True
         if discard_base:s['base']=None
         if not s.get('base'):s['edit_region']=None
-        if refresh_prompt:s['prompt']=self.prompt(e,r['kind'],r['view'],r.get('details',''))
+        if refresh_prompt:s['prompt']=self.prompt(e,r['kind'],r['view'],r.get('details',''),ratio=s['ratio'])
         if model:
             s.update(model=model,quality='auto' if model in MODELS else 'low',resolution='auto' if model=='gpt-image-2' else '1k')
         if character_sheet:
             if e['category']!='Character' or r['kind'] not in ('portrait','sheet'):
                 raise APIError('invalid_view','Choose a character reference view.')
-            s.update(prompt=self.prompt(e,r['kind'],r['view'],r.get('details','')),ratio='3:2')
+            s.update(prompt=self.prompt(e,r['kind'],r['view'],r.get('details',''),ratio=s['ratio']),ratio='3:2')
         if prompt is not None:s['prompt']=text(prompt,self.app.images.prompt_limit(s['model']),'Image direction',True)
         if r['kind'] in ('portrait','location','prop'):
             s['extras']=[{'asset_id':a} for a in e.get('profile',{}).get('reference_ids',[])]
@@ -372,10 +417,15 @@ class WorldWorkshop:
             if (preset or ('voice_preset' in profile and prior_preset and preset!=prior_preset)) and e.get('reference_id'):
                 ref=self.app.asset_studio.get(e['reference_id'])
                 if ref.get('voice')!=(preset or None):self.app.asset_studio.dispatch('PUT',[ref['id']],dict(expected_revision=ref['revision'],voice=preset or None),None)
-            for r in self.p.all('world-asset'):
-                if r.get('entity_id')==identity and not r.get('selected_asset_id'):
-                    d=self.app.images.draft(r['draft_id']);s=self.prepare_settings(e,r,d)
-                    self.app.images.edit(d['id'],dict(expected_revision=d['revision'],settings=s))
+            requested=data.get('refresh_view_ids',[])
+            if not isinstance(requested,list) or any(not isinstance(i,str) for i in requested):raise APIError('invalid_view','refresh_view_ids must list views to refresh explicitly.')
+            owned={v['id']:v for v in self.p.all('world-asset') if v.get('entity_id')==identity}
+            if any(i not in owned for i in requested):raise APIError('invalid_view','Choose views belonging to this entity.')
+            for view_id in requested:
+                view=owned[view_id];d=self.app.images.draft(view['draft_id'])
+                if d.get('prompt_preparation') or d.get('manual_review_revision') is not None:continue
+                settings=self.prepare_settings(e,view,d)
+                self.app.images.edit(d['id'],dict(expected_revision=d['revision'],settings=settings))
         return e
 
     def add_views(self,identity,data):
@@ -394,7 +444,38 @@ class WorldWorkshop:
             e.update(revision=e['revision']+1);self.p.put('world-entity',e)
         return result
 
+    def generation_settings(self,e,r,d,request,model,*,allow_unreviewed=False):
+        requested=request.get('prompt')
+        ready=self.prompt_ready(d)
+        if ready and (requested is None or requested in (d['settings']['prompt'],d.get('prompt_preparation',{}).get('brief'))):
+            s=self.render_settings(d['settings'],model)
+        else:
+            s=self.prepare_settings(e,r,d,fresh=True,model=model,prompt=requested,
+                refresh_prompt=not ready and request.get('reviewed') is not True,character_sheet=request.get('character_sheet') is True)
+            if not self.app.mock and request.get('reviewed') is not True and not allow_unreviewed:
+                raise APIError('prompt_review_required','Review your supplied prompt with reviewed:true, or review the saved image draft before generating. AI writing is optional.',409)
+        return s
+
+    def generation_preview(self,pid,data):
+        pid=self.resolve_production(pid);job=self.job(pid,data.get('job_id'))
+        requests=data.get('requests',[])
+        if not isinstance(requests,list) or not 1<=len(requests)<=8:raise APIError('batch_limit','Preview 1-8 images at a time.')
+        model=self.model(data.get('model','gpt-image-2'));previews=[]
+        for request in requests:
+            view=self.p.get(request.get('view_id'),'world-asset');self.check_view(view,request)
+            if view['world_job_id']!=job['id']:raise APIError('invalid_view','Choose a view from this workshop job.')
+            entity=self.entity(view['entity_id'])
+            if view['kind'] in ('sheet','coverage') and not entity.get('identity_asset_id'):raise APIError('identity_required','Confirm the main reference first.',409)
+            draft=self.app.images.draft(view['draft_id'])
+            # Preview permits unreviewed drafts; generation still requires review.
+            settings=self.generation_settings(entity,view,draft,request,model,allow_unreviewed=True)
+            endpoint,body,count=self.app.images.compile({**draft,'settings':settings})
+            previews.append(dict(view_id=view['id'],view_revision=view['revision'],draft_id=draft['id'],draft_revision=draft['revision'],request=body,endpoint=endpoint,source_count=count,ratio=settings['ratio']))
+        from workflow_tools import usage
+        return dict(production_id=pid,job_id=job['id'],requests=previews,usage=usage(self.app),approval_required=True)
+
     def generate(self,pid,data,key):
+        pid=self.resolve_production(pid)
         j=self.job(pid,data.get('job_id'))
         if data.get('approved') is not True:raise APIError('approval_required','Choose Generate to authorize these images.',403)
         if not isinstance(key,str) or not re.fullmatch('[A-Za-z0-9_-]{8,100}',key):raise APIError('idempotency_required','Supply a unique generation key.')
@@ -410,19 +491,11 @@ class WorldWorkshop:
         for request in requests:
             r=self.p.get(request.get('view_id'),'world-asset')
             if r['world_job_id']!=j['id']:raise APIError('invalid_view','Choose a view from this story.')
-            self.p.check(r,request)
+            self.check_view(r,request)
             e=self.entity(r['entity_id'])
             if r['kind'] in ('sheet','coverage') and not e.get('identity_asset_id'):raise APIError('identity_required','Confirm the main reference first.',409)
             d=self.app.images.draft(r['draft_id'])
-            requested=request.get('prompt')
-            ready=self.prompt_ready(d)
-            if ready and (requested is None or requested in (d['settings']['prompt'],d.get('prompt_preparation',{}).get('brief'))):
-                s=self.render_settings(d['settings'],model)
-            else:
-                s=self.prepare_settings(e,r,d,fresh=True,model=model,prompt=requested,
-                    refresh_prompt=not ready and request.get('reviewed') is not True,character_sheet=request.get('character_sheet') is True)
-                if not self.app.mock and request.get('reviewed') is not True:
-                    raise APIError('prompt_review_required','Review your supplied prompt with reviewed:true, or review the saved image draft before generating. AI writing is optional.',409)
+            s=self.generation_settings(e,r,d,request,model)
             authored_by=request.get('authored_by','agent')
             if authored_by not in ('agent','human'):raise APIError('invalid_author','authored_by must be agent or human.')
             self.app.images.compile({**d,'settings':s});prepared.append((r,d,s,request))
@@ -433,7 +506,13 @@ class WorldWorkshop:
         with self.p.mutation():
             drafts=[]
             for r,d,s,request in prepared:
-                edited=self.app.images.edit(d['id'],dict(expected_revision=d['revision'],settings=s))
+                layout=request.get('image_layout') or ('character_sheet' if request.get('character_sheet') is True or (r['kind'] in ('portrait','sheet') and request.get('prompt') is None and not d.get('manual_prompt_review')) else 'main')
+                labels={'main':'Main image','front':'Front view','side':'Side view','back':'Back view','head':'Head close-up','character_sheet':'Character sheet'}
+                if layout not in labels:raise APIError('invalid_layout','Choose a supported image_layout.')
+                entity=self.entity(r['entity_id'])
+                edited=self.app.images.edit(d['id'],dict(expected_revision=d['revision'],settings=s,title=(entity['name']+' · '+labels[layout])[:120]))
+                self.app.images.draft(d['id'])['image_layout']=layout
+                self.app.images.persist()
                 if request.get('reviewed') is True:
                     self.app.images.dispatch('POST',['drafts',d['id'],'review-prompt'],dict(expected_revision=edited['revision'],reviewed=True,authored_by=request.get('authored_by','agent')),None)
                 drafts.append(dict(view_id=r['id'],draft_id=d['id'],revision=edited['revision']))
@@ -443,7 +522,7 @@ class WorldWorkshop:
         return batch
 
     def prompt_draft(self,identity,data):
-        r=self.p.get(identity,'world-asset');self.p.check(r,data)
+        r=self.p.get(identity,'world-asset');self.check_view(r,data)
         self.job(r['production_id'],r['world_job_id']);e=self.entity(r['entity_id'])
         if r['kind'] in ('sheet','coverage') and not e.get('identity_asset_id'):
             raise APIError('identity_required','Confirm the main reference before preparing variations.',409)
@@ -549,7 +628,8 @@ class WorldWorkshop:
             # The reviewer identifies the actual pixels, not the intended prompt.
             if e['category']=='Character':
                 asset,_=self.app.asset(asset_id)
-                asset.update(image_layout=layout,name=e['name']+' · '+labels[layout]+'.'+asset['ext'])
+                asset['image_layout']=layout
+                if not asset.get('candidate_name_custom'):asset['name']=e['name']+' · '+labels[layout]+'.'+asset['ext']
                 for job in self.app.images.db['jobs']:
                     for output in job.get('outputs',[]):
                         if output['id']==asset_id:output.update(copy.deepcopy(asset))
@@ -559,6 +639,26 @@ class WorldWorkshop:
                 self.app.images.edit(draft['id'],dict(expected_revision=draft['revision'],title=e['name']+' · '+labels[layout]))
             self.connect_shots(self.job(e['production_id'],e['world_job_id']))
         return self.snapshot(e['production_id'],e['world_job_id'])
+
+    def rename_candidate(self,identity,data):
+        view=self.p.get(identity,'world-asset');self.check_view(view,data)
+        entity=self.entity(view['entity_id'])
+        candidate=next((o for o in self.view(view)['outputs'] if o['id']==data.get('asset_id')),None)
+        if candidate is None:raise APIError('invalid_candidate','Choose a candidate from this view.')
+        asset,_=self.app.asset(candidate['id'])
+        if data.get('expected_review_revision')!=candidate.get('review_revision',0):raise APIError('revision_conflict',f"expected_review_revision must be the candidate review revision; current is {candidate.get('review_revision',0)}.",409)
+        title=text(data.get('title'),120,'Candidate title',True)
+        if any(c in title for c in ('/','\\','\n','\r')):raise APIError('invalid_title','Use a title without path separators or line breaks.')
+        from image_bible_change import image_change_mutation
+        with image_change_mutation(self,asset['id']):
+            asset.update(name=title+'.'+asset['ext'],title=title,candidate_name_custom=True,review_revision=asset.get('review_revision',0)+1)
+            for job in self.app.images.db['jobs']:
+                for output in job.get('outputs',[]):
+                    if output['id']==asset['id']:output.update(copy.deepcopy(asset))
+            self.app.images.save(self.app.assets_path,self.app.assets);self.app.images.persist()
+            if asset['id'] in view.get('candidate_reviews',{}):view['candidate_reviews'][asset['id']]['review_revision']=candidate.get('review_revision',0)+1
+            view.update(revision=view['revision']+1);self.p.put('world-asset',view)
+        return self.snapshot(entity['production_id'],entity['world_job_id'])
 
     def return_image(self,identity,data):
         r=self.p.get(identity,'world-asset');self.entity(r['entity_id'])
@@ -598,7 +698,17 @@ class WorldWorkshop:
 
     def edit_view(self,identity,data):
         with self.app.agent.lock,self.app.images.lock:
-            view=self.p.get(identity,'world-asset');self.p.check(view,data)
+            view=self.p.get(identity,'world-asset');self.check_view(view,data)
+            if 'ratio' in data:
+                d=self.app.images.draft(view['draft_id']);settings=copy.deepcopy(d['settings']);settings['ratio']=data['ratio']
+                settings=self.app.images.normalized(settings)
+                entity=self.entity(view['entity_id'])
+                if not d.get('prompt_preparation') and d.get('manual_review_revision') is None:
+                    settings['prompt']=self.prompt(entity,view['kind'],view['view'],view.get('details',''),ratio=settings['ratio'])
+                with self.p.mutation():
+                    self.app.images.edit(d['id'],dict(expected_revision=d['revision'],settings=settings))
+                    view.update(revision=view['revision']+1);self.p.put('world-asset',view)
+                return self.snapshot(entity['production_id'],entity['world_job_id'])
             if view['kind'] not in ('sheet','coverage'):
                 raise APIError('invalid_view','Only optional view titles can be renamed.')
             title=text(data.get('title'),80,'View title',True)
@@ -610,7 +720,7 @@ class WorldWorkshop:
 
     def clear_view_approval(self,identity,data):
         with self.app.agent.lock,self.app.images.lock:
-            view=self.p.get(identity,'world-asset');self.p.check(view,data)
+            view=self.p.get(identity,'world-asset');self.check_view(view,data)
             if view['kind'] not in ('sheet','coverage'):
                 raise APIError('invalid_view','Clear the main approval from the entity controls.')
             if self.view(view)['pending']:
@@ -697,6 +807,7 @@ class WorldWorkshop:
             entity=self.entity(parts[1]);return 200,self.snapshot(entity['production_id'],entity['world_job_id'])
         if len(parts)==3 and parts[0]=='worlds':
             pid=parts[1]
+            if parts[2]=='generation-preview' and method=='POST':return 200,self.generation_preview(pid,data)
             if parts[2]=='workshop':
                 if method=='GET':return 200,self.snapshot(pid)
                 if method=='POST':return 200,self.start(pid,data)
@@ -712,6 +823,7 @@ class WorldWorkshop:
         if len(parts)==3 and parts[0]=='assets' and parts[2] in ('bible-change-preview','bible-change-confirm') and method=='POST':
             from image_bible_change import preview,confirm
             return 200,(preview if parts[2]=='bible-change-preview' else confirm)(self,parts[1],data)
+        if len(parts)==3 and parts[0]=='assets' and parts[2]=='rename-candidate' and method=='POST':return 200,self.rename_candidate(parts[1],data)
         if len(parts)==3 and parts[0]=='assets' and parts[2]=='prompt-draft' and method=='POST':return 200,self.prompt_draft(parts[1],data)
         if len(parts)==3 and parts[0]=='assets' and parts[2]=='clear-approval' and method=='POST':return 200,self.clear_view_approval(parts[1],data)
         if len(parts)==3 and parts[0]=='assets' and parts[2]=='confirm' and method=='POST':return 200,self.confirm(parts[1],data)

@@ -32,7 +32,7 @@ Each visual-development window follows **Describe → Add inspiration → Prepar
 
 The Bible controls appearance. Reject wrong hair, clothing or other details and explicitly Generate another candidate. Studio never automatically changes the Bible or submits another paid generation to accommodate a mismatch. To prefer the image instead, choose **Keep image & update Bible…**, edit the relevant descriptive fields, preview the exact before/after values, then **Confirm image & Bible changes**. This approves the candidate and records an image-sourced change in the owning Bible/book and entity history. Stale previews must be recreated. Previous episode snapshots remain fixed.
 
-Candidate files use **Main image** until their actual layout is confirmed. Use **Confirm four-view character sheet** only after inspecting all four required views. Single images and individual views are never inferred to be sheets from the prompt.
+Candidate files are named from the requested generation layout: **Character sheet** for sheet generation, **Main image** for a single main image, or a named view. Use the candidate’s **⋯ → Rename candidate** to correct a mismatched or old name. Use **Confirm four-view character sheet** only after inspecting all four required views. Single images and individual views are never inferred to be sheets from the prompt.
 
 Before generation, Grok usage shows either a known value or an explicit unavailable balance. Returned xAI rate-limit headers are shown separately with their scope and observation time; they are not the subscription balance.
 
@@ -75,3 +75,23 @@ Use **Read manuscript** for a readable live preview and Markdown or JSON downloa
 Existing stories, episodes, scripts, shots, media, and earlier World Builder records are retained. The Bible exposes **Review earlier storybook** and a deliberate copy into empty shared fields. Earlier episode-specific material is not automatically classified as series canon. Existing saved episode scripts are available in the Script chapter.
 
 Script uploads default to **Import script**: review the text and import it unchanged, preserving saved Bible and Storybook details. AI does not run on file selection. After reviewing the upload, **Compare with saved details using AI** optionally starts a duplicate/conflict review with the selected connection; apply its changes only after choosing what to keep.
+
+
+## Refresh linked entities and check readiness
+
+Storybook links keep their saved Bible appearance. **Source changed** badges
+identify newer source descriptions or images. Choose **Refresh linked entities**
+to copy the latest linked entities deliberately; it preserves scripts, existing
+storyboard references and generated media. **Production readiness** lists every
+linked entity and its saved main image, with **Needs main image** for missing or
+unusable images. A newer source image is available after refreshing the link.
+
+The Series Bible has a **Default image aspect ratio** setting. Places and props
+use that ratio when creating their drafts; **Image aspect ratio** in development
+can override it for one view. Existing drafts keep their saved settings. Entity
+saves preserve all draft prompts; use prompt preparation deliberately when you
+want new automatic wording.
+
+Grok usage status appears before image or writing approval and in Agent API paid
+previews. The connected subscription bridge does not expose a real balance, so it
+remains explicitly unavailable; returned rate-limit observations are separate.

@@ -231,9 +231,9 @@ class AgentAPI:
                 'prompt_preparation_message':self.app.prompting.preparation_message('video',record),
                 'prompt_provenance':manual or copy.deepcopy(record.get('prompt_preparation')),
                 'prompt_review_provenance':manual,
-                'effective_audio_reference':effective_audio,
+                'effective_audio_reference':effective_audio,'usage':usage(self.app),
                 **status}
-        except ValueError as e:return {'valid':False,'errors':[str(e)],'warnings':warnings,'error_code':getattr(e,'code','validation_failed'),'effective_audio_reference':effective_audio}
+        except ValueError as e:return {'valid':False,'errors':[str(e)],'warnings':warnings,'error_code':getattr(e,'code','validation_failed'),'effective_audio_reference':effective_audio,'usage':usage(self.app)}
 
     def record(self, identity):
         record=next((r for r in self.db['scenes'] if r['id']==identity),None)
