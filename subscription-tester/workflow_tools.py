@@ -80,7 +80,10 @@ def usage(app):
   if datetime.fromtimestamp(timestamp).astimezone().date()==today and not job.get('mock') and not job.get('imported_media_id') and not job.get('mirrored_from'):counts[model]=counts.get(model,0)+1
   message=str(job.get('error') or job.get('message') or '')
   if job.get('limit_error_at') or re.search(r'quota|rate.?limit|usage.?limit|HTTP 429',message,re.I):limits.append(dict(model=model,timestamp=job.get('limit_error_at',timestamp),message='Provider recently returned a limit/quota error.'))
- return dict(date=str(today),timezone=str(datetime.now().astimezone().tzinfo),providers={p:dict(remaining='unknown',used_today='unknown',readable=False,reason='Remaining subscription allowance cannot be read by Studio: the subscription bridge does not expose a numeric media allowance.') for p in ('grok_video','grok_image','chatgpt_image')},app_generations_today=counts,recent_limit_errors=[v for v in limits if time.time()-v['timestamp']<86400])
+ from provider_usage import grok
+ providers={p:{**grok(app,p),'readable':False} for p in ('grok_video','grok_image')}
+ providers['chatgpt_image']=dict(remaining='unknown',used_today='unknown',readable=False,reason='Remaining subscription allowance cannot be read by Studio: the subscription bridge does not expose a numeric media allowance.')
+ return dict(date=str(today),timezone=str(datetime.now().astimezone().tzinfo),providers=providers,app_generations_today=counts,recent_limit_errors=[v for v in limits if time.time()-v['timestamp']<86400])
 
 def layout(app,identity,data=None):
  p=app.productions

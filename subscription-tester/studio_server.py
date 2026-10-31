@@ -83,6 +83,8 @@ class Studio(Tester):
             headers=oauth_headers()
             with httpx.Client(timeout=20,follow_redirects=False) as client:
                 response=client.get('https://api.x.ai/v1/models',headers=headers)
+                from provider_usage import observe
+                observe(self,response,'grok_account')
         except Exception:
             raise ValueError('Could not verify Grok. Check your connection or reconnect, then check again.') from None
         if response.status_code==200:
@@ -376,6 +378,8 @@ class Studio(Tester):
                             job['audio_provider_uploads']=uploads
                             save_json(self.history_path,self.history)
                     response = client.post(VIDEO_ENDPOINT, headers=headers, json=body)
+                    from provider_usage import observe
+                    observe(self,response,'grok_video')
                     if response.status_code not in (200, 202):
                         self.update(http_status=response.status_code)
                         detail = upstream_error(response, (headers['Authorization'], headers['Authorization'].removeprefix('Bearer ')))
@@ -401,6 +405,8 @@ class Studio(Tester):
                 deadline = time.monotonic() + CONFIG['poll_timeout_seconds']
                 while time.monotonic() < deadline:
                     result = client.get(f'https://api.x.ai/v1/videos/{identity}', headers=oauth_headers())
+                    from provider_usage import observe
+                    observe(self,result,'grok_video')
                     if result.status_code not in (200, 202):
                         self.finish(job, 'error', f'Polling stopped (HTTP {result.status_code}). The job may still be running; use Resume polling. Do not submit a duplicate.')
                         return

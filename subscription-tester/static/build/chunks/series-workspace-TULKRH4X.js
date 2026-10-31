@@ -1,4 +1,4 @@
-import{a as ni,b as ri,c as li,d as Pt,e as di,f as ci,g as pi,h as ui,j as mi}from"./chunk-NAFKIRHM.js";import{b as oi}from"./chunk-BQ5ZJOGG.js";import"./chunk-MM4TTKS5.js";import"./chunk-76PNKCIM.js";import{a as ai,b as Dt}from"./chunk-XMKEPPMV.js";import{b as le,c as si,h as g,i as mt,j as me}from"./chunk-PY6753WH.js";var Qi=`SCENE 1 \u2014 INT. [LOCATION NAME] \u2014 DAY
+import{a as ni,b as ri,c as li,d as Pt,e as di,f as ci,g as pi,h as ui,j as mi}from"./chunk-YKYAQQEV.js";import{b as oi}from"./chunk-BQ5ZJOGG.js";import"./chunk-MM4TTKS5.js";import"./chunk-76PNKCIM.js";import{a as ai,b as Dt}from"./chunk-XMKEPPMV.js";import{b as le,c as si,h as g,i as mt,j as me}from"./chunk-PY6753WH.js";var Qi=`SCENE 1 \u2014 INT. [LOCATION NAME] \u2014 DAY
 
 [Describe the opening setting, the characters present, and the visible action. Use the same character and location names as your Series Bible.]
 

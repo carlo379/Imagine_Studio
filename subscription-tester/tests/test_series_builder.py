@@ -32,7 +32,7 @@ class SeriesBuilderTests(unittest.TestCase):
         specific=self.f.dispatch('GET',['entities',workshop['entities'][0]['id'],'workshop'],{},None)[1]
         self.assertEqual(specific['job']['id'],workshop['job']['id'])
 
-    def test_first_character_sheet_and_existing_portrait_draft_use_all_five_views(self):
+    def test_first_character_sheet_and_existing_portrait_draft_use_exactly_four_views(self):
         bible=self.save();workshop=self.s.workshop('series-bible',self.pid,dict(expected_revision=bible['revision']))
         hero=workshop['entities'][0];view=next(v for v in workshop['views'] if v['entity_id']==hero['id']);draft=self.app.images.draft(view['draft_id'])
         self.assertEqual(draft['settings']['ratio'],'3:2')
@@ -41,10 +41,10 @@ class SeriesBuilderTests(unittest.TestCase):
         old={**draft['settings'],'ratio':'2:3','prompt':'Generate a face-only portrait.'}
         self.app.images.edit(draft['id'],dict(expected_revision=draft['revision'],settings=old))
         with patch.object(self.app,'spawn') as spawn:
-            result=self.s.dispatch('POST',['series',self.pid,'generate'],dict(job_id=workshop['job']['id'],model='gpt-image-2',approved=True,requests=[dict(view_id=view['id'],expected_revision=view['revision'],character_sheet=True)]),'five-view-sheet-once')[1]
+            result=self.s.dispatch('POST',['series',self.pid,'generate'],dict(job_id=workshop['job']['id'],model='gpt-image-2',approved=True,requests=[dict(view_id=view['id'],expected_revision=view['revision'],character_sheet=True)]),'four-view-sheet-once')[1]
             spawn.assert_called_once()
         saved=self.app.images.draft(view['draft_id'])
-        self.assertEqual(saved['settings']['model'],'gpt-image-2');self.assertEqual(saved['settings']['ratio'],'3:2');self.assertIn('five clearly separated views',saved['settings']['prompt'])
+        self.assertEqual(saved['settings']['model'],'gpt-image-2');self.assertEqual(saved['settings']['ratio'],'3:2');self.assertIn('exactly four clearly separated views',saved['settings']['prompt'])
         self.assertEqual(len(result['requests']),1);self.assertIsNone(self.p.get(hero['id'],'world-entity')['identity_asset_id'])
 
     def test_saved_appearance_survives_visual_edit_and_reaches_both_image_models(self):

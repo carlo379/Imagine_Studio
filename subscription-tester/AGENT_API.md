@@ -216,3 +216,11 @@ Plan song-clock shots, review take windows and assemble separate working edits
 inside Studio. See Song Performance (internal record omitted from public source) and the
 complete Agent API example (internal record omitted from public source). Local import/analysis works
 without custom-recording generation permission; no planning action generates video.
+
+
+Workshop generation accepts reviewed human/agent prompts without the AI writer.
+Character templates use exactly four views (front, side, back, head close-up).
+Image-to-Bible updates require a stored preview and explicit confirmation; normal
+image approval preserves the Bible. Series routes accept production or series IDs.
+See [the reference](AGENT_API_REFERENCE.md#workshop-prompts-image-sourced-bible-changes-and-grok-usage)
+for request examples, SDK helpers, layout naming and observed Grok rate limits.

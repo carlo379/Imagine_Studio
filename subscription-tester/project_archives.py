@@ -28,7 +28,7 @@ MAX_EXPANDED = 50 * 1024**3
 MAX_JSON = 512 * 1024**2
 MAX_DOCUMENT_JSON = 64 * 1024**2
 MAX_MEMBERS = 100000
-KINDS = set('asset asset-development assistant caption-job direction edit-media episode-book episode-script-draft export image-job-audit imported-video media-prompt-job opening-frame-backup opening-frame-job production scene-layout script-upload-review series-bible series-member shot timeline video-direction-backup video-direction-job world world-asset world-entity world-job world-render'.split())
+KINDS = set('image-bible-preview asset asset-development assistant caption-job direction edit-media episode-book episode-script-draft export image-job-audit imported-video media-prompt-job opening-frame-backup opening-frame-job production scene-layout script-upload-review series-bible series-member shot timeline video-direction-backup video-direction-job world world-asset world-entity world-job world-render'.split())
 KINDS.update(('song-project','song-analysis','song-shot','song-review','song-assembly','song-comparison'))
 STORES = {'evidence.reviews', 'sql', 'assets', 'references', 'history', 'video.scenes', 'video.urls', 'image.drafts', 'image.jobs', 'story.series', 'story.episodes', 'story.links', 'story.chats'}
 FILE_PATH = re.compile(r'(?:assets/[A-Za-z0-9_-]+\.(?:png|jpg|jpeg|webp)|videos/[A-Za-z0-9_-]+\.mp4|edit-media/[A-Za-z0-9_-]+\.[a-z0-9]+|exports/[A-Za-z0-9_-]+/(?:export\.mp4|edit\.json|captions\.srt)|(?:video-request-snapshots|video-review-evidence)/[A-Za-z0-9_-]+/[A-Za-z0-9_-]+\.(?:json|bin|jpg))\Z')

@@ -168,6 +168,16 @@ class StudioClient(SongClient):
     def image_test_status(self,identity):return self.request('image-test/'+identity)
 
     def entity_workshop(self,identity):return self.request('filmmaking/entities/'+identity+'/workshop')
+    def usage(self):return self.request('usage')
+    def generate_workshop(self,identity,job_id,requests,*,scope='series',model='gpt-image-2',approved=False,idempotency_key):
+        if scope not in ('series','episodes','worlds'):raise ValueError('Choose series, episodes or worlds.')
+        return self.request('filmmaking/'+scope+'/'+identity+'/generate','POST',dict(job_id=job_id,requests=requests,model=model,approved=approved),idempotency_key)
+    def confirm_workshop_image(self,view,asset_id,*,approved=False,image_layout='main'):
+        return self.request('filmmaking/assets/'+view['id']+'/confirm','POST',dict(expected_revision=view['revision'],asset_id=asset_id,approved=approved,image_layout=image_layout))
+    def preview_image_bible_change(self,view,entity,asset_id,changes,*,image_layout='main'):
+        return self.request('filmmaking/assets/'+view['id']+'/bible-change-preview','POST',dict(expected_revision=view['revision'],expected_entity_revision=entity['revision'],asset_id=asset_id,changes=changes,image_layout=image_layout))
+    def confirm_image_bible_change(self,view_id,preview_id,*,approved=False):
+        return self.request('filmmaking/assets/'+view_id+'/bible-change-confirm','POST',dict(preview_id=preview_id,approved=approved,authored_by='agent'))
     def clear_entity_approval(self,record):
         return self.request('filmmaking/entities/'+record['id']+'/clear-approval','POST',dict(expected_revision=record['revision']))
     def rename_view(self,record,title):

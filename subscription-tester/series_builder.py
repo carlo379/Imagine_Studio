@@ -79,7 +79,7 @@ class SeriesBuilder:
         r=self.bible(pid);self.p.check(r,data)
         answers=self.answers(data.get('answers',r['answers']));guide=self.guide(data.get('guide',r['guide']))
         with self.f.asset_mutation():
-            self.p.put('series-bible',dict(id=r['id'],revision=r['revision']+1,production_id=pid,answers=answers,guide=guide))
+            self.p.put('series-bible',dict(id=r['id'],revision=r['revision']+1,production_id=pid,answers=answers,guide=guide,**({'image_change_history':copy.deepcopy(r['image_change_history'])} if 'image_change_history' in r else {})))
             self.sync_cards('series-bible',r,guide)
         return self.bible(pid)
 
@@ -173,7 +173,7 @@ class SeriesBuilder:
         with self.f.asset_mutation():
             if answers['title'] and answers['title']!=episode['title']:
                 episode=self.app.stories.episode_edit(self.app.stories.record('episodes',eid),dict(expected_revision=data.get('expected_episode_revision'),title=answers['title']))
-            self.p.put('episode-book',dict(id=r['id'],revision=r['revision']+1,production_id=r['production_id'],episode_id=eid,answers=answers,guide=guide,script_options=copy.deepcopy(options),selected_asset_ids=list(ids),inheritance=inherited))
+            self.p.put('episode-book',dict(id=r['id'],revision=r['revision']+1,production_id=r['production_id'],episode_id=eid,answers=answers,guide=guide,script_options=copy.deepcopy(options),selected_asset_ids=list(ids),inheritance=inherited,**({'image_change_history':copy.deepcopy(r['image_change_history'])} if 'image_change_history' in r else {})))
             self.sync_cards('episode-book',r,guide)
         return self.book(eid)
 
@@ -547,6 +547,11 @@ class SeriesBuilder:
         return render_bible(self.app,production,job,dict(entities=entities,views=views),{**book,'answers':answers,'series_title':production['title'] if not is_series else '', 'book_kind':'Series Bible' if is_series else 'Episode Storybook'}),'application/pdf'
 
     def dispatch(self, method, parts, data, key):
+        if len(parts)>=2 and parts[0]=='series':
+            # Resolve once, before any lookup, fingerprint or stored foreign key.
+            matches=[p for p in self.p.all('production') if parts[1] in (p['id'],p.get('series_id'))]
+            if len(matches)!=1:raise APIError('not_found','Series project not found. Supply its production id or linked series id.',404)
+            parts=[parts[0],self.production(matches[0]['id'])['id'],*parts[2:]]
         if len(parts)==4 and parts[0]=='episodes' and parts[2]=='upload-ai-review' and method=='GET':
             self.episode(parts[1]);return 200,self.upload_review.ai.view(self.upload_review.ai.read(parts[1],parts[3]))
         if len(parts)==3 and parts[0]=='series':

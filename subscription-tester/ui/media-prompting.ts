@@ -8,7 +8,7 @@ export async function workshopPrompts(views:any[],model:string,brief?:string,ins
  for(const view of views){
   const value=await service('filmmaking/assets/'+view.id+'/prompt-draft','POST',{
    expected_revision:view.revision,model,...(brief!==undefined?{brief}:{})});
-  if(!value.current||(instruction!==undefined&&instruction!==(value.draft.prompt_preparation?.instruction||'')))drafts.push(value.draft);
+  if(!value.current||(instruction!==undefined&&instruction!==(value.draft.prompt_preparation?.instruction||'')&&!value.draft.manual_prompt_review))drafts.push(value.draft);
  }
  if(!drafts.length)return true;
  if(requireReviewed)throw Error('Your image inputs changed. Return to Prepare prompt and review a new prompt before generating.');
@@ -20,4 +20,4 @@ export async function workshopPrompts(views:any[],model:string,brief?:string,ins
  return false;
 }
 
-export const viewPromptReady=(view:any,model:string,brief?:string,instruction?:string)=>!!view?.draft?.prompt_preparation_current&&(instruction===undefined||instruction===(view.draft.prompt_preparation?.instruction||''))&&(brief===undefined||brief===view.draft.settings.prompt||brief===view.draft.prompt_preparation?.brief);
+export const viewPromptReady=(view:any,model:string,brief?:string,instruction?:string)=>!!view?.draft?.prompt_preparation_current&&(instruction===undefined||instruction===(view.draft.prompt_preparation?.instruction||'')||!!view.draft.manual_prompt_review&&view.draft.manual_review_revision===view.draft.revision)&&(brief===undefined||brief===view.draft.settings.prompt||brief===view.draft.prompt_preparation?.brief);

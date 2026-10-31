@@ -327,3 +327,5 @@
 .wb-description-tab-panel{min-height:360px}.wb-development .wb-tabbed-description .wb-description-tab-panel>label:first-child{margin-top:0}.wb-development .wb-tabbed-description .wb-description-tab-panel textarea{font-size:13px;max-height:none;min-height:140px}.wb-development .wb-tabbed-description [id$="-describe-panel-look"] textarea{min-height:340px}
 .wb-description-actions{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;margin-top:24px}.wb-description-actions button{min-height:44px}.wb-development .wb-tabbed-description{padding:20px}
 @media(max-width:600px){.wb-description-tab-panel{min-height:280px}.wb-development .wb-tabbed-description{padding:16px}.wb-description-actions{align-items:stretch;flex-direction:column}.wb-description-actions button{width:100%}}
+
+.wb-review-dialog table{width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed}.wb-review-dialog :is(th,td){text-align:left;vertical-align:top;padding:10px 8px;border-bottom:1px solid #35533f;white-space:pre-wrap;overflow-wrap:anywhere}

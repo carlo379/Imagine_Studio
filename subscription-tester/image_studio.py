@@ -182,8 +182,16 @@ class ImageStudio:
         title=data.get('title',record['title'])
         if not isinstance(title,str) or not 1<=len(title.strip())<=120: raise APIError('invalid_title','Enter an image title up to 120 characters.')
         settings=self.sync_mentions(self.attach(self.normalized(data.get('settings',record['settings'])),data.get('named_references',[])))
+        if 'title' not in data and settings['prompt']!=record['settings']['prompt']:
+            title=title.replace('Character sheet','Main image')
         previous_title=record['title']
-        record.update(title=title.strip(),settings=settings,revision=record['revision']+1,updated_at=time.time()); self.persist()
+        reviewed=self.manual_review_current(record)
+        before=self.app.prompting.authoring_basis('image',record) if reviewed else None
+        record.update(title=title.strip(),settings=settings,revision=record['revision']+1,updated_at=time.time())
+        if reviewed and before==self.app.prompting.authoring_basis('image',record):
+            record['manual_review_revision']=record['revision']
+            record.setdefault('manual_prompt_review',dict(authored_by='human'))['revision']=record['revision']
+        self.persist()
         if previous_title!=record['title'] and hasattr(self.app,'productions'):self.app.productions.media_renamed('image',identity,record['title'])
         return copy.deepcopy(record)
 
@@ -257,12 +265,19 @@ class ImageStudio:
         body.update(n=s['n'],deferred=True,response_format='url')
         return ('https://api.x.ai/v1/images/edits' if sources else 'https://api.x.ai/v1/images/generations'),body,len(sources)
 
+    def manual_review_current(self,record):
+        if record.get('manual_review_revision')!=record['revision']:return False
+        fingerprint=record.get('manual_prompt_review',{}).get('authoring_fingerprint')
+        if not fingerprint:return True  # Existing clients' saved reviews remain supported.
+        from prompt_guides import digest
+        return fingerprint==digest(self.app.prompting.authoring_basis('image',record))
+
     def review_provenance(self, record):
         revision = record.get('manual_review_revision')
         if revision is None:
             return None
         review = record.get('manual_prompt_review') or dict(revision=revision, authored_by='human')
-        return {**copy.deepcopy(review), 'current': revision == record['revision']}
+        return {**copy.deepcopy(review), 'current': self.manual_review_current(record)}
 
     def validate(self, record):
         try:
@@ -277,7 +292,7 @@ class ImageStudio:
                     a,b=map(float,requested.split(':'))
                     if abs(width/height-a/b)>.01: warnings.append('Selected pixel dimensions control the output shape; aspect-ratio guidance differs from that size.')
             return dict(valid=True,errors=[],endpoint=endpoint,request=body,source_count=count,billing=IMAGE_MODELS[body['model']]['billing'],transport='Codex app-server (compiled scene; native tool call occurs during generation)' if body['model']=='gpt-image-2' else 'multipart/form-data' if body.get('images') and body['model'] in openai_images.API_MODELS else 'JSON',expanded_prompt_chars=len(body['prompt']),warnings=warnings,
-                prompt_preparation_current=self.app.prompting.current('image',record) or record.get('manual_review_revision')==record['revision'],prompt_provenance=copy.deepcopy(record.get('prompt_preparation')),
+                prompt_preparation_current=self.app.prompting.current('image',record) or self.manual_review_current(record),prompt_provenance=copy.deepcopy(record.get('prompt_preparation')),
                 prompt_review_provenance=self.review_provenance(record))
         except ValueError as e: return dict(valid=False,errors=[str(e)])
 
@@ -293,7 +308,7 @@ class ImageStudio:
         if data.get('expected_revision')!=record['revision']: raise APIError('revision_conflict','Review the current image draft before generation.',409)
         if not self.app.mock and not self.config['live_generations_enabled']: raise APIError('live_locked','Live image generation is locked.',403)
         if any(j.get('draft',{}).get('id')==identity and j.get('mock')==self.app.mock and j.get('recoverable') for j in self.db['jobs']):raise APIError('resume_required','Resume or discard the existing image request before starting another generation.',409)
-        if record.get('manual_review_revision')!=record['revision']:self.app.prompting.require('image',record)
+        if not self.manual_review_current(record):self.app.prompting.require('image',record)
         endpoint,body,count=self.compile(record)
         provider=IMAGE_MODELS[body['model']]['provider']
         if not self.app.mock:
@@ -317,7 +332,7 @@ class ImageStudio:
         else: raise ValueError('Unsupported image output format.')
         identity=uuid.uuid4().hex;path=self.app.storage/'assets'/f'{identity}.{ext}'
         path.parent.mkdir(parents=True,exist_ok=True,mode=0o700);path.write_bytes(raw);path.chmod(0o600)
-        asset=dict(id=identity,name=('Mock · ' if job['mock'] else '')+job['draft']['title']+'.'+ext,ext=ext,mime=mime,bytes=len(raw),src='/api/assets/'+identity,
+        asset=dict(id=identity,name=('Mock · ' if job['mock'] else '')+job['draft']['title'].replace('Character sheet','Main image')+'.'+ext,ext=ext,mime=mime,bytes=len(raw),src='/api/assets/'+identity,
                    generated=True,image_job_id=job['id'],approved=False,mock=job['mock'])
         if ext=='png' and len(raw)>=24:
             asset['width'],asset['height']=struct.unpack('>II',raw[16:24])
@@ -377,6 +392,8 @@ class ImageStudio:
         deadline=time.monotonic()+self.config.get('poll_timeout_seconds',600)
         while time.monotonic()<deadline:
             result=client.get('https://api.x.ai/v1/images/'+job['request_id'],headers=oauth_headers())
+            from provider_usage import observe
+            observe(self.app,result,'grok_image')
             if result.status_code==404:
                 job['recoverable']=False;self.persist()
                 raise ValueError('The saved Grok image request is no longer available. Deferred results expire after 24 hours.')
@@ -431,6 +448,8 @@ class ImageStudio:
                         credential_load_start=time.monotonic();headers=oauth_headers()
                         trace=begin(self.app,job['id'],headers['Authorization'],utc(),round(time.monotonic()-credential_load_start,6))
                         response=post(client,endpoint,headers,body,trace)
+                        from provider_usage import observe
+                        observe(self.app,response,'grok_image')
                         if response.status_code not in (200,202):
                             detail=upstream_error(response,(headers['Authorization'],headers['Authorization'][7:]))
                             with self.lock: job.update(http_status=response.status_code)
@@ -514,7 +533,8 @@ class ImageStudio:
                     if authored_by not in ('agent','human'):raise APIError('invalid_author','authored_by must be agent or human.')
                     self.compile(record)
                     record['manual_review_revision']=record['revision']
-                    record['manual_prompt_review']=dict(revision=record['revision'],authored_by=authored_by,reviewed_at=time.time())
+                    from prompt_guides import digest
+                    record['manual_prompt_review']=dict(revision=record['revision'],authored_by=authored_by,reviewed_at=time.time(),authoring_fingerprint=digest(self.app.prompting.authoring_basis('image',record)))
                     self.persist()
                     return 200,copy.deepcopy(record)
                 if len(parts)==2 and method=='PUT':return 200,self.edit(parts[1],data)

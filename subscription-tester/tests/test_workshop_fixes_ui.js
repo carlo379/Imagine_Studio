@@ -1,0 +1,46 @@
+const assert=require('node:assert/strict'),path=require('node:path'),{buildSync}=require('esbuild'),{JSDOM}=require('jsdom');
+const compiled=path.resolve('.validation/workshop-fixes-ui.cjs');
+buildSync({stdin:{contents:"export {WorkshopPrompt} from './ui/workshop-prompt'; export {ImageBibleChange,ViewDirection} from './ui/world-workshop'; export {ProviderUsage} from './ui/provider-usage';",resolveDir:process.cwd(),loader:'tsx'},bundle:true,platform:'node',external:['react','react-dom'],outfile:compiled,logLevel:'silent'});
+const dom=new JSDOM('<div id="root"></div>',{url:'http://test.invalid/',pretendToBeVisual:true}),win=dom.window;
+for(const key of ['window','document','HTMLElement','HTMLInputElement','HTMLTextAreaElement','Event','MouseEvent','CustomEvent'])global[key]=win[key];
+global.IS_REACT_ACT_ENVIRONMENT=true;global.requestAnimationFrame=win.requestAnimationFrame.bind(win);global.cancelAnimationFrame=win.cancelAnimationFrame.bind(win);
+const React=require('react'),{act}=React,{createRoot}=require('react-dom/client'),{WorkshopPrompt,ImageBibleChange,ProviderUsage,ViewDirection}=require(compiled),root=createRoot(document.getElementById('root'));
+let calls=[],continued=0,closed=0,refreshed=0;
+const draft={id:'draft',revision:2,settings:{prompt:'Initial four views'}},view={id:'view',revision:4,draft},entity={id:'annie',revision:3,profile:{hair:'Brown',clothing:'Blue jacket'}};
+const reply=body=>({ok:true,json:async()=>structuredClone(body)});
+global.fetch=async(url,opts={})=>{let data=opts.body?JSON.parse(opts.body):null;calls.push({url,method:opts.method||'GET',data});
+ if(url.endsWith('/image-studio/drafts/draft'))return reply(draft);
+ if(url.endsWith('/prompting/image/draft'))return reply({current:false});
+ if(url.endsWith('/assets/view/prompt-draft')){draft.revision++;draft.settings.prompt=data.brief;return reply({draft,current:false});}
+ if(url.endsWith('/drafts/draft/review-prompt'))return reply({...draft,manual_review_revision:draft.revision});
+ if(url.endsWith('/bible-change-preview'))return reply({id:'preview',diff:[{field:'hair',before:'Brown',bible_before:'Brown',after:data.changes.hair}]});
+ if(url.endsWith('/bible-change-confirm'))return reply({});
+ if(url.endsWith('/usage'))return reply({providers:{grok_image:{balance_available:false,remaining:'unknown',rate_limit_observation:{scope:'grok_image',source:'xAI response headers',observed_at:1700000000,rate_limits:{'x-ratelimit-remaining-requests':'12'}}}}});
+ throw Error('Unexpected '+url);
+};
+const button=text=>[...document.querySelectorAll('button')].find(b=>b.textContent===text);
+async function input(node,value){await act(async()=>{Object.getOwnPropertyDescriptor(win.HTMLTextAreaElement.prototype,'value').set.call(node,value);node.dispatchEvent(new win.Event('input',{bubbles:true}));});}
+(async()=>{
+ await act(async()=>root.render(React.createElement(WorkshopPrompt,{view,model:'gpt-image-2',instruction:'',disabled:false,save:async()=>{},refresh:async()=>({views:[view]}),continueToGenerate:()=>continued++})));
+ await input(document.querySelector('textarea'),'My Annie sheet: front, side, back, head close-up.');
+ await act(async()=>button('I reviewed this prompt · continue →').click());
+ assert.equal(continued,1);assert.equal(calls.find(c=>c.url.endsWith('/prompt-draft')).data.brief,draft.settings.prompt);
+ assert.deepEqual(calls.find(c=>c.url.endsWith('/review-prompt')).data,{expected_revision:3,reviewed:true,authored_by:'human'});
+ assert(!calls.some(c=>c.url.endsWith('/generate')||c.method==='POST'&&c.url.includes('/prompting/')),'Manual review neither writes with AI nor generates');
+ calls=[];let generated=0;
+ await act(async()=>root.render(React.createElement(ViewDirection,{view:{...view,view:'Weekend',outputs:[]},model:'gpt-image-2',busy:false,generate:async()=>generated++})));
+ await input(document.querySelector('textarea'),'My custom outfit sheet with four views');
+ await act(async()=>button('I reviewed this view prompt').click());assert.equal(generated,0,'Reviewing an optional outfit must not generate');
+ assert(calls.find(c=>c.url.endsWith('/review-prompt')));await act(async()=>button('Generate this view ↗').click());assert.equal(generated,1);
+ calls=[];
+ await act(async()=>root.render(React.createElement(ImageBibleChange,{entity,target:{view,image:{id:'candidate',src:'/candidate.png'}},disabled:false,close:()=>closed++,refresh:async()=>{refreshed++;}})));
+ await input([...document.querySelectorAll('label')].find(l=>l.firstChild?.textContent==='hair').querySelector('textarea'),'Red');
+ assert.equal(calls.length,0,'Editing a proposed change does not save the Bible');
+ await act(async()=>button('Preview Bible changes').click());
+ assert.equal(calls.length,1);assert(document.querySelector('table').textContent.includes('Brown'));assert(document.querySelector('table').textContent.includes('Red'));assert.equal(closed,0);
+ await act(async()=>button('Confirm image & Bible changes').click());
+ assert.deepEqual(calls[1].data,{preview_id:'preview',approved:true,authored_by:'human'});assert.equal(closed,1);assert.equal(refreshed,1);
+ await act(async()=>root.render(React.createElement(ProviderUsage)));
+ assert(document.body.textContent.includes('balance: unavailable'));assert(document.body.textContent.includes('12'));assert(document.body.textContent.includes('separate from your subscription balance'));assert(document.body.textContent.includes('Last observed values may have changed'));
+ await act(async()=>root.unmount());dom.window.close();console.log('Workshop fixes UI: manual prompt review, explicit Bible preview/confirmation, timestamped rate limits and unavailable balance pass.');
+})().catch(async e=>{console.error(e);await act(async()=>root.unmount());dom.window.close();process.exitCode=1;});

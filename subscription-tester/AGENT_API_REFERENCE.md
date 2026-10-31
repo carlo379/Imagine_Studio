@@ -438,7 +438,7 @@ See [PRODUCTION_WORKSPACE_GUIDE.md](PRODUCTION_WORKSPACE_GUIDE.md) for the conne
 
 `stage` is `develop`, `script`, `storyboard`, `generate`, or `edit`. `board_view` is `board` or `image`. A shot selection also selects its linked image/video drafts for the browser. New jobs include their originating video draft ID in local metadata; it is removed before calling the provider. Old jobs without an ID are associated only by an exact full settings snapshot that identifies a unique saved video draft. Unmatched histories remain in Existing work.
 
-Image refinement/reuse creates a version in the same shot. Supply `parent_draft_id` when explicitly creating an image version. `GET image-studio/drafts/{id}/versions` lists its family. Refinements send the base image by default; attached identity snapshots remain available with views deselected. `POST image-studio/drafts/{id}/review-prompt` with `{expected_revision, reviewed: true, authored_by: "agent"}` records review of an agent-written image prompt without calling the AI writer. `authored_by` accepts `"agent"` or `"human"`; it is optional and defaults to `"human"` for existing clients and the human UI. Read the matching image model guide first. The draft stores `manual_prompt_review` with revision, author and review time; validation and generation jobs expose `prompt_review_provenance`, and generated-image history shows the author. This is author metadata, not human generation authorization. Any later draft change invalidates the review. Prompt limits, references, model capabilities, separate human generation authorization (`approved: true`), idempotency keys and candidate approval/review are unchanged. The legacy `image-test` route is unchanged.
+Image refinement/reuse creates a version in the same shot. Supply `parent_draft_id` when explicitly creating an image version. `GET image-studio/drafts/{id}/versions` lists its family. Refinements send the base image by default; attached identity snapshots remain available with views deselected. `POST image-studio/drafts/{id}/review-prompt` with `{expected_revision, reviewed: true, authored_by: "agent"}` records review of an agent-written image prompt without calling the AI writer. `authored_by` accepts `"agent"` or `"human"`; it is optional and defaults to `"human"` for existing clients and the human UI. Read the matching image model guide first. The draft stores `manual_prompt_review` with revision, author and review time; validation and generation jobs expose `prompt_review_provenance`, and generated-image history shows the author. This is author metadata, not human generation authorization. Changes to prompt, references, aspect ratio, edit region or relevant creative context invalidate the review. Saving only model, quality, resolution or candidate count preserves it. Prompt limits, references, model capabilities, separate human generation authorization (`approved: true`), idempotency keys and candidate approval/review are unchanged. The legacy `image-test` route is unchanged.
 
 `POST /productions/recent` returns `{items, total, production_total, offset, limit, has_more}`. Optional `projects_only: true` restricts results and counts to Story / Series and explicit Quick Video projects. Items publish `is_project` and `project_label` (`Quick Video` or null), as well as media classification. The default page size is 10, the maximum is 100, and offset starts at 0. Items are sorted newest first by `last_updated` (Unix seconds) and include `item_type` (`video`, `image`, `script`, `story`). The original unpaginated list route remains available for existing agents.
 
@@ -560,7 +560,7 @@ Episode actions: `plan`, `complete-production`, `production-review`, `jobs`, `ap
 
 `GET filmmaking/series/{id}/book.pdf` and `GET filmmaking/episodes/{id}/book.pdf` export saved data and approved references locally, returning application/pdf. Earlier worlds/routes/records remain supported.
 
-Character reference generation requests may include `character_sheet: true` for primary character or outfit sheet views. This applies the five-view prompt and 3:2 layout to existing drafts at the explicit generation action; saved candidates and approval IDs are retained. Approval, expected revisions, scoped job checks and idempotency are unchanged.
+Character reference generation requests may include `character_sheet: true` for primary character or outfit sheet views. For an unreviewed template draft this applies the four-view prompt and 3:2 layout at the explicit generation action; a current reviewed prompt is preserved; saved candidates and approval IDs are retained. Approval, expected revisions, scoped job checks and idempotency are unchanged.
 
 Character, location and prop profiles accept up to five `reference_ids`. Main image generation rebuilds draft `extras` from the current saved profile, including when a main location is already approved; old request snapshots and approval stay unchanged. All five inputs are compiled into the selected model transport in order. Location coverage still uses the approved identity only. This workspace retains a five-input limit on both subscription paths; OpenAI’s Images API documents 16 inputs, but that API limit does not establish the Codex subscription limit. Sources: https://developers.openai.com/api/reference/resources/images/methods/edit and https://docs.x.ai/developers/model-capabilities/images/multi-image-editing (checked October 6, 2026).
 
@@ -1208,3 +1208,95 @@ To record a directly authored video prompt, POST `scenes/{id}/review-prompt` wit
 `<IMAGE_0>` stays in the compiled prompt intentionally. It is xAI positional prompt syntax; `image` is the JSON field carrying the pinned first frame. With `image` set, the starting frame takes `<IMAGE_0>` and `reference_images` starts at `<IMAGE_1>`. Without a starting frame, references start at `<IMAGE_0>`. Last frames and keyframes use their separate controls, not extra numbered reference positions. Studio validates this mapping and rejects missing positions. See [xAI reference-to-video input ordering](https://docs.x.ai/developers/model-capabilities/video/reference-to-video). No live generation was needed to verify the documented contract.
 
 Dialogue preflight adds the non-blocking `dialogue_timing` warning for explicitly quoted spoken lines when `word_count / 2.5 + 1` exceeds the clip duration. The extra second reserves about 0.5s at each end. Script and prompt copies are not counted twice. This is an estimate; the app never edits dialogue, duration or shot structure automatically.
+
+
+## Workshop prompts, image-sourced Bible changes, and Grok usage
+
+All `filmmaking/series/{id}/...` routes accept either the linked story series ID
+or the production ID. Resolution happens before lookups, saved foreign keys and
+generation fingerprints, so replaying a generation key with either ID returns
+the same batch. An unknown ID asks for a production ID or linked series ID.
+Episode routes continue to take episode IDs; `worlds` routes take production IDs.
+
+The character template requests **one image with exactly four views: full body
+front, full body side, full body back, and head close-up of the face**. No fifth
+or three-quarter view is requested. A caller-supplied prompt is retained verbatim;
+the caller must include the four-view instruction when requesting a sheet.
+
+AI writing is optional. To submit your reviewed wording directly through the
+workshop, POST `filmmaking/series/{id}/generate` (or the existing `episodes` /
+`worlds` generate route) with a unique `Idempotency-Key` and:
+
+```json
+{
+  "job_id": "workshop-job-id",
+  "model": "gpt-image-2",
+  "approved": true,
+  "requests": [{
+    "view_id": "annie-main-view-id",
+    "expected_revision": 1,
+    "prompt": "Annie in her Bible outfit. One sheet, exactly four views: front, side, back and head close-up of the face. Same identity in every view.",
+    "reviewed": true,
+    "authored_by": "agent"
+  }]
+}
+```
+
+`reviewed: true` attests review of that request's prompt and inputs; it does not
+authorize spending. `approved: true` still requires explicit human approval for
+the concrete paid request. `authored_by` accepts `agent` or `human` (direct
+workshop requests default to `agent`). Missing review fails live preflight before
+submission. Alternatively save/review the linked image draft using the existing
+`image-studio/drafts/{id}/review-prompt` route, then generate through the workshop.
+Current AI preparations continue to work. No writer or provider retry is added.
+`prompt-draft` and render-setting saves retain current reviewed text and review.
+The job stores manual review provenance; creative edits invalidate that review.
+
+Poll the returned render and image jobs and inspect the actual candidate. POST
+`filmmaking/assets/{view_id}/confirm` with `expected_revision`, `asset_id`,
+`approved: true`, and optionally `image_layout`. Layout accepts `main` (default),
+`front`, `side`, `back`, `head`, or `character_sheet`. Use `character_sheet` only
+after verifying the actual image contains the four required views. Generated
+candidate filenames are conservatively named Main image; confirmation assigns
+the reviewed layout to filenames and titles. Prompt intent does not certify the
+pixels. Single-view images can be confirmed normally as the main identity.
+Ordinary confirmation never rewrites descriptive Bible fields.
+
+To deliberately prefer an image's appearance over the Bible:
+
+1. POST `filmmaking/assets/{view_id}/bible-change-preview` with view
+   `expected_revision`, `expected_entity_revision`, `asset_id`, and a `changes`
+   map of descriptive profile fields, for example `{"hair":"Red"}`. Optional
+   `image_layout` has the values above. It accepts an available main-reference
+   candidate belonging to this view, not a foreign image or outfit variation.
+2. Inspect the returned `id` and `diff` entries (`field`, entity `before`,
+   `bible_before`, `after`). No generation, AI inspection, approval or Bible edit
+   occurs during preview; the proposal is stored locally for confirmation.
+3. With explicit user confirmation, POST
+   `filmmaking/assets/{view_id}/bible-change-confirm` with `preview_id`,
+   `approved: true`, and `authored_by: "agent"`. Only the stored proposal is used;
+   changed entity/view/book/image-review revisions require a new preview.
+
+Confirmation keeps the image, updates the owning Series Bible, Episode Book or
+legacy world and entity/reference description, and appends an audit event with
+`source: "image"`, `asset_id`, `preview_id`, exact diff, confirmer and time.
+Reconfirming an applied preview is idempotent. Saved episode/request snapshots
+are retained. Default handling of mismatches is rejection followed by an
+explicitly approved new generation; there are no automatic Bible edits or retries.
+
+`GET /agent/v1/usage` keeps its existing provider keys and `remaining` /
+`used_today` fields. Grok adds `balance_available: false` and a plain explanation
+that the connected subscription bridge does not provide the subscription balance.
+`rate_limit_observation` is null until xAI returns supported headers through an
+existing account check, image submission/poll or video submission/poll. Otherwise
+it contains `source`, `scope`, `observed_at` (Unix seconds) and `rate_limits` with
+allowlisted header names and original values. Observations persist in the private
+workspace; they are last observed values, not live counters or guaranteed quotas.
+Account/model headers are labeled `grok_account`, never attributed to a media
+endpoint. Rate limits, per-request usage and app request counts are not a remaining
+subscription balance. Reading usage neither generates media nor guesses a balance.
+The UI shows the same unavailable-balance statement and dated rate-limit data.
+
+`StudioClient` exposes `usage`, `generate_workshop`, `confirm_workshop_image`,
+`preview_image_bible_change` and `confirm_image_bible_change`; the existing generic
+`request` method remains supported. Generation approval defaults to false.

@@ -3,6 +3,7 @@
 Queue state is durable, generation is explicit, and interrupted batches never replay.
 """
 import copy
+from contextlib import nullcontext
 import hashlib
 import io
 import json
@@ -121,7 +122,7 @@ class WorldWorkshop:
             # Reserve space for every view and outfit instruction. Narrative
             # biographies are retained in the Bible, not duplicated in edits.
             profile=e.get('profile',{})
-            parts=['Create one polished character reference sheet with five clearly separated views: full body front, full body rear (back), full body side, full body three-quarter (3/4), and a head close-up. Same face, proportions and outfit in every view. Neutral standing poses, full figures uncropped, generous spacing on a simple neutral background.',
+            parts=['Create one polished character reference sheet with exactly four clearly separated views: full body front, full body rear (back), full body side, and a head close-up of the face. Do not add a three-quarter or fifth view. Same face, proportions and outfit in every view. Neutral standing poses, full figures uncropped, generous spacing on a simple neutral background.',
                    'Character: '+e['name'][:80]+'.']
             if kind=='sheet':
                 parts += ['Use input image 1 as the approved character identity. Preserve his or her face, hair, body, age and rendering style. Change only clothing and accessories; the reference outfit must not override the requested outfit.',
@@ -148,7 +149,7 @@ class WorldWorkshop:
         profile=self.description({k:v for k,v in fields.items() if not (lighting and k=='lighting')})
         base=f"{e['category']} reference: {e['name']}.\n{lighting}{e['description'][:1000]}\n{profile[:1000]}\nLook: {j['result']['visual_style'][:400]}.\n"
         if kind in ('portrait','sheet'):
-            layout='Create one polished character reference sheet with five clearly separated views: full body front, full body rear (back), full body side, full body three-quarter (3/4), and a head close-up. Same character, face, proportions, clothing and colors in every view. Neutral standing poses, full figures uncropped, generous spacing on a simple neutral background. '
+            layout='Create one polished character reference sheet with exactly four clearly separated views: full body front, full body rear (back), full body side, and a head close-up of the face. Do not add a three-quarter or fifth view. Same character, face, proportions, clothing and colors in every view. Neutral standing poses, full figures uncropped, generous spacing on a simple neutral background. '
             if kind=='sheet':layout+='Preserve the identity in the supplied reference. Outfit: '+details+'\n'
             else:layout+='Establish a distinctive, reusable identity from these character details.\n'
             base=layout+base
@@ -161,7 +162,7 @@ class WorldWorkshop:
         return (base+' No captions, labels or watermarks.')[:4096 if e['category']=='Location' else 2700]
 
     def new_view(self,e,kind,label,model,details=''):
-        if kind=='portrait':label='Character sheet'
+        if kind=='portrait':label='Main image'
         refs=e.get('profile',{}).get('reference_ids',[])[:5]
         if kind in ('sheet','coverage'):
             if not e.get('identity_asset_id'):raise APIError('identity_required','Confirm the main reference before creating variations.',409)
@@ -269,7 +270,7 @@ class WorldWorkshop:
         for output in outputs:
             output.update(r.get('candidate_reviews',{}).get(output['id'],{}))
         draft=copy.deepcopy(self.app.images.draft(r['draft_id']))
-        draft['prompt_preparation_current']=self.app.prompting.current('image',draft)
+        draft['prompt_preparation_current']=self.prompt_ready(draft)
         batches=[b for b in self.p.all('world-render') if b['mock']==self.app.mock and b['status']=='pending' and r['id'] in b['view_ids']]
         recommended=self.prompt(entity,r['kind'],r['view'],r.get('details','')) if entity and r['kind'] in ('portrait','sheet','location','prop') else draft['settings']['prompt']
         if draft['prompt_preparation_current']:recommended=draft['settings']['prompt']
@@ -300,6 +301,9 @@ class WorldWorkshop:
     def snapshot(self,pid,job_id=None):
         j=self.job(pid,job_id)
         return dict(job=j,entities=[e for e in self.p.all('world-entity') if e['world_job_id']==j['id']],views=[self.view(r) for r in self.p.all('world-asset') if r['world_job_id']==j['id']],batches=[b for b in self.p.all('world-render') if b['world_job_id']==j['id'] and b['mock']==self.app.mock])
+
+    def prompt_ready(self,draft):
+        return self.app.prompting.current('image',draft) or self.app.images.manual_review_current(draft)
 
     def render_settings(self,settings,model):
         """Switch image connections without changing reviewed creative content."""
@@ -410,27 +414,31 @@ class WorldWorkshop:
             e=self.entity(r['entity_id'])
             if r['kind'] in ('sheet','coverage') and not e.get('identity_asset_id'):raise APIError('identity_required','Confirm the main reference first.',409)
             d=self.app.images.draft(r['draft_id'])
-            if not self.app.mock or self.app.prompting.current('image',d):
-                self.app.prompting.require('image',d)
-                requested=request.get('prompt')
-                if requested is not None and requested not in (d['settings']['prompt'],d.get('prompt_preparation',{}).get('brief')):
-                    raise APIError('prompt_preparation_required','Prepare and review this view for the updated creative brief before generating.',409)
-                # Render the reviewed preparation exactly; templates are briefs.
+            requested=request.get('prompt')
+            ready=self.prompt_ready(d)
+            if ready and (requested is None or requested in (d['settings']['prompt'],d.get('prompt_preparation',{}).get('brief'))):
                 s=self.render_settings(d['settings'],model)
             else:
-                s=self.prepare_settings(e,r,d,fresh=True,model=model,prompt=request.get('prompt'),
-                    refresh_prompt=r['kind'] in ('portrait','location','prop'),character_sheet=request.get('character_sheet') is True)
-            self.app.images.compile({**d,'settings':s});prepared.append((r,d,s))
+                s=self.prepare_settings(e,r,d,fresh=True,model=model,prompt=requested,
+                    refresh_prompt=not ready and request.get('reviewed') is not True,character_sheet=request.get('character_sheet') is True)
+                if not self.app.mock and request.get('reviewed') is not True:
+                    raise APIError('prompt_review_required','Review your supplied prompt with reviewed:true, or review the saved image draft before generating. AI writing is optional.',409)
+            authored_by=request.get('authored_by','agent')
+            if authored_by not in ('agent','human'):raise APIError('invalid_author','authored_by must be agent or human.')
+            self.app.images.compile({**d,'settings':s});prepared.append((r,d,s,request))
         if not self.app.mock:
             if not self.app.agent.config['live_generations_enabled']:raise APIError('live_locked','Live generation is locked.',403)
             if model=='gpt-image-2' and not self.app.images.account_status()['subscription']['signed_in']:raise APIError('sign_in_required','Connect ChatGPT in Workspace & account.',403)
             if model=='grok-imagine-image-2.0' and not self.app.state['signed_in']:raise APIError('sign_in_required','Connect Grok in Workspace & account.',403)
         with self.p.mutation():
             drafts=[]
-            for r,d,s in prepared:
-                edited=self.app.images.edit(d['id'],dict(expected_revision=d['revision'],settings=s));drafts.append(dict(view_id=r['id'],draft_id=d['id'],revision=edited['revision']))
+            for r,d,s,request in prepared:
+                edited=self.app.images.edit(d['id'],dict(expected_revision=d['revision'],settings=s))
+                if request.get('reviewed') is True:
+                    self.app.images.dispatch('POST',['drafts',d['id'],'review-prompt'],dict(expected_revision=edited['revision'],reviewed=True,authored_by=request.get('authored_by','agent')),None)
+                drafts.append(dict(view_id=r['id'],draft_id=d['id'],revision=edited['revision']))
             for request in drafts:request['revision']=self.app.images.draft(request['draft_id'])['revision']
-            batch=self.p.new('world-render',production_id=pid,world_job_id=j['id'],mock=self.app.mock,status='pending',key=key,fingerprint=fingerprint,view_ids=[r['id'] for r,_,_ in prepared],requests=drafts,image_job_ids=[],completed=0,error=None,cancel_requested=False)
+            batch=self.p.new('world-render',production_id=pid,world_job_id=j['id'],mock=self.app.mock,status='pending',key=key,fingerprint=fingerprint,view_ids=[r['id'] for r,_,_,_ in prepared],requests=drafts,image_job_ids=[],completed=0,error=None,cancel_requested=False)
         self.app.spawn(self.worker,batch)
         return batch
 
@@ -441,7 +449,7 @@ class WorldWorkshop:
             raise APIError('identity_required','Confirm the main reference before preparing variations.',409)
         d=self.app.images.draft(r['draft_id']);model=self.model(data.get('model',d['settings']['model']))
         brief=data.get('brief')
-        if self.app.prompting.current('image',d) and (brief is None or brief in (d['settings']['prompt'],d.get('prompt_preparation',{}).get('brief'))):
+        if self.prompt_ready(d) and (brief is None or brief in (d['settings']['prompt'],d.get('prompt_preparation',{}).get('brief'))):
             if d['settings']['model']!=model:
                 with self.p.mutation():
                     d=self.app.images.edit(d['id'],dict(expected_revision=d['revision'],settings=self.render_settings(d['settings'],model)))
@@ -488,7 +496,7 @@ class WorldWorkshop:
         batch['revision']=max(batch['revision'],current['revision']+1)
         return self.p.put('world-render',batch)
 
-    def confirm(self,identity,data):
+    def confirm(self,identity,data,*,coordinated=False):
         r=self.p.get(identity,'world-asset');e=self.entity(r['entity_id']);self.p.check(r,data)
         if data.get('approved') is not True:raise APIError('review_required','Confirm the image after reviewing it.',403)
         asset_id=data.get('asset_id');candidate=next((o for o in self.view(r)['outputs'] if o['id']==asset_id),None)
@@ -497,10 +505,14 @@ class WorldWorkshop:
         available(candidate)
         available(self.app.asset(asset_id)[0])
         if candidate.get('compatible') is False:raise APIError('identity_changed','Generate this view again with the current confirmed reference.',409)
-        if r.get('selected_asset_id')==asset_id:return self.snapshot(e['production_id'],e['world_job_id'])
+        layout=data.get('image_layout',candidate.get('image_layout','main'))
+        if r.get('selected_asset_id')==asset_id and layout==candidate.get('image_layout','main'):return self.snapshot(e['production_id'],e['world_job_id'])
+        labels={'main':'Main image','front':'Front view','side':'Side view','back':'Back view','head':'Head close-up','character_sheet':'Character sheet'}
+        if layout not in labels or (layout=='character_sheet' and e['category']!='Character'):
+            raise APIError('invalid_layout','Choose the actual image layout after inspecting the candidate.')
         is_main=r['kind'] in ('portrait','location','prop')
         replacing=is_main and e.get('identity_asset_id') and e['identity_asset_id']!=asset_id
-        with self.f.asset_mutation():
+        with (nullcontext() if coordinated else self.f.asset_mutation()):
             if candidate.get('job_id'):
                 self.app.images.dispatch('POST',['jobs',candidate['job_id'],'approve'],dict(asset_id=asset_id,approved=True),None)
             else:self.safe_asset(asset_id)
@@ -534,6 +546,17 @@ class WorldWorkshop:
                             other.update(selected_asset_id=None,reference_id=None,revision=other['revision']+1);self.p.put('world-asset',other)
                         d=self.app.images.draft(other['draft_id']);s=copy.deepcopy(d['settings']);s['extras']=[{'asset_id':asset_id}];s['bindings']=[]
                         self.app.images.edit(d['id'],dict(expected_revision=d['revision'],settings=s))
+            # The reviewer identifies the actual pixels, not the intended prompt.
+            if e['category']=='Character':
+                asset,_=self.app.asset(asset_id)
+                asset.update(image_layout=layout,name=e['name']+' · '+labels[layout]+'.'+asset['ext'])
+                for job in self.app.images.db['jobs']:
+                    for output in job.get('outputs',[]):
+                        if output['id']==asset_id:output.update(copy.deepcopy(asset))
+                self.app.images.save(self.app.assets_path,self.app.assets);self.app.images.persist()
+                r.update(view=labels[layout] if is_main else r['view']);self.p.put('world-asset',r)
+                draft=self.app.images.draft(r['draft_id'])
+                self.app.images.edit(draft['id'],dict(expected_revision=draft['revision'],title=e['name']+' · '+labels[layout]))
             self.connect_shots(self.job(e['production_id'],e['world_job_id']))
         return self.snapshot(e['production_id'],e['world_job_id'])
 
@@ -686,6 +709,9 @@ class WorldWorkshop:
             if parts[2]=='upload':return 200,self.upload_identity(parts[1],data)
             if parts[2]=='clear-approval':return 200,self.clear_approval(parts[1],data)
         if len(parts)==2 and parts[0]=='assets' and method=='PUT':return 200,self.edit_view(parts[1],data)
+        if len(parts)==3 and parts[0]=='assets' and parts[2] in ('bible-change-preview','bible-change-confirm') and method=='POST':
+            from image_bible_change import preview,confirm
+            return 200,(preview if parts[2]=='bible-change-preview' else confirm)(self,parts[1],data)
         if len(parts)==3 and parts[0]=='assets' and parts[2]=='prompt-draft' and method=='POST':return 200,self.prompt_draft(parts[1],data)
         if len(parts)==3 and parts[0]=='assets' and parts[2]=='clear-approval' and method=='POST':return 200,self.clear_view_approval(parts[1],data)
         if len(parts)==3 and parts[0]=='assets' and parts[2]=='confirm' and method=='POST':return 200,self.confirm(parts[1],data)

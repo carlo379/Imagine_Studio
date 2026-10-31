@@ -195,7 +195,7 @@ Placeholders in `[]`. Project data sources: **STYLE** = series visual style line
 ### T2. Character reference sheet (World Builder compatible; 3:2)
 Default = the app's 5-view layout. Alternatives from the catalog in 9.2.
 ```
-Create one polished character reference sheet with five clearly separated views on a flat neutral [#B5B5B5] background: full body front, full body rear, full body side, full body three-quarter, and a head-and-shoulders close-up. Same face, proportions and outfit in every view. Neutral standing pose, relaxed arms, empty hands, neutral expression, flat even light, full figures uncropped with generous spacing, at least 8% margin around each view.
+Create one polished character reference sheet with exactly four clearly separated views on a flat neutral [#B5B5B5] background: full body front, full body rear, full body side, and a head close-up of the face. Same face, proportions and outfit in every view. Neutral standing pose, relaxed arms, empty hands, neutral expression, flat even light, full figures uncropped with generous spacing, at least 8% margin around each view.
 Character: [CHAR title]. [Gender/age/ethnicity-or-species/height/build/hair/eyes/skin as short fields.] Appearance and distinguishing details: [CHAR description, ≤600 chars]. Main outfit: [outfit, materials, colors].
 Series visual style: [STYLE]. Identity color palette: [3-5 colors].
 No captions, labels, numbers, text or watermarks.
@@ -249,7 +249,7 @@ Create [shot description]. Input image 1 is [subject]: keep [features] exact. In
 - Sub-style cue + guardrail pairs are in Appendix A (35 styles).
 
 ### 9.2 Character-sheet formats (choose by job; catalog)
-- **5-view (app default):** front, rear, side, three-quarter, head close-up. 3:2.
+- **4-view (app default):** front, side, back, head close-up of the face. Exactly four views in one 3:2 image.
 - **3-panel (most widely used, all styles):** (1) front body from the collar down with **no head**, (2) straight rear full body, (3) three-quarter head-and-shoulders close-up with neutral expression and ≥8% margin. The headless body panel stops faces disagreeing and gives the face more detail. Lock the background with a hex code ("flat #B5B5B5 background") or an uploaded blank layout template ("Use input image 2 only as the empty three-panel layout; keep its equal vertical panels and divider lines").
 - **4-panel:** full-body front three-quarter, full-body rear, front head-and-shoulders close-up, 90-degree profile close-up (photoreal sheets: neutral gray, soft key upper left, fill right).
 - **Turnaround + 8 expressions** (neutral, happy, delighted, sad, surprised, confused, angry, talking): drifts more; test before committing.
@@ -262,7 +262,7 @@ All worked examples use fictional demonstration data. Use saved assets for actua
 
 ### E1. Character sheet
 ```
-Create a five-view reference sheet of a fictional gardener wearing a green raincoat and carrying an empty watering can. Show front, rear, side, three-quarter and head close-up views. Keep proportions and clothing consistent. Use a plain gray background and even light.
+Create a four-view reference sheet of a fictional gardener wearing a green raincoat and carrying an empty watering can. Show exactly four views: front, side, back and head close-up. Keep proportions and clothing consistent. Use a plain gray background and even light.
 ```
 
 ### E2. Location plate

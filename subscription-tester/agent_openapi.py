@@ -254,7 +254,7 @@ def specification():
       '/filmmaking/series/{id}/library':{'get':operation('Read reusable series entities and canonical reference versions'),'post':operation('Explicitly add an existing Asset Studio reference to this series',object_body)},
       '/filmmaking/series/{id}/library/promote':{'post':operation('Promote an episode entity for future reuse; expected_revision required; previous episode snapshots stay intact',object_body)},
       '/filmmaking/series/{id}/workshop':{'get':operation('Read Series Bible visual development'),'post':operation('Prepare characters, locations and props before writing any screenplay; no generation',object_body)},
-      '/filmmaking/series/{id}/generate':{'post':operation('Generate explicitly approved subscription reference images from the Bible workshop',object_body)},
+      '/filmmaking/series/{id}/generate':{'post':operation('Generate explicitly approved subscription reference images from a reviewed custom or AI prompt; series id or production id accepted',object_body)},
       '/filmmaking/episodes/{id}/book':{'get':operation('Read an independent Episode Book, current script and frozen series inheritance'),'put':operation('Save episode questionnaire, cards and selected_asset_ids; refresh_inheritance explicit; title changes require expected_episode_revision',object_body)},
       '/filmmaking/episodes/{id}/library':{'get':operation('Read reusable series assets plus this episode\'s local entities')},
       '/filmmaking/episodes/{id}/workshop':{'get':operation('Read episode character, location and prop development'),'post':operation('Prepare this episode\'s visual cards; no generation',object_body)},
@@ -353,6 +353,8 @@ def specification():
                 'properties':{'job':{'$ref':'#/components/schemas/PromptPreparationJob'},'draft':{'type':'object'}}
             }}}
         }
+    paths['/filmmaking/assets/{id}/bible-change-preview']={'post':operation('Preview explicit descriptive changes from an own main candidate; no writing, generation or Bible update',{'type':'object','required':['expected_revision','expected_entity_revision','asset_id','changes'],'properties':{'expected_revision':revision,'expected_entity_revision':revision,'asset_id':{'type':'string'},'changes':{'type':'object','additionalProperties':{'type':'string'}},'image_layout':{'type':'string'}}})}
+    paths['/filmmaking/assets/{id}/bible-change-confirm']={'post':operation('Approve the exact stored image-to-Bible preview; revision conflicts require a new preview',{'type':'object','required':['preview_id','approved'],'properties':{'preview_id':{'type':'string'},'approved':{'type':'boolean'},'authored_by':{'enum':['human','agent']}}})}
     paths['/filmmaking/assets/{id}/prompt-draft']={'post':operation('Build a workshop creative brief using current canonical details and inputs, or reuse an unchanged reviewed preparation; never writes final AI prose or renders',{'type':'object','required':['expected_revision'],'properties':{'expected_revision':revision,'model':{'type':'string'},'brief':{'type':'string'}}})}
     from agent_completion_contracts import contracts as completion_contracts
     parity_schemas.update(completion_contracts(paths,operation))
