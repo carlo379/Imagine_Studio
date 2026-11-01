@@ -1190,6 +1190,102 @@ staging/upload files; graceful error cleanup cannot run in that case. The server
 must load the updated implementation before the new route is available.
 
 
+## Uploaded recording references
+
+Uploaded WAV/MP3 recordings can be attached to full Grok Video 1.5 drafts at
+480p/720p. The scene compiler assigns `<AUDIO_0>` to the recording, just as preset
+voices receive audio tags. An optional character association adds its name to
+that mapping. Remove preset voices explicitly before attaching a recording.
+
+This implementation uses the documented `reference_audios: [{"url": "..."}]`
+contract. xAI documents custom recording access as restricted to trusted partners.
+Account entitlement and exact song/lip synchronization remain **unverified**.
+Validation succeeds locally with a warning; only a live provider response can
+establish account acceptance. There is no silent preset or unconditioned fallback.
+
+Local upload/trim/preview routes and SDK helpers are unchanged:
+
+- `GET audio-references/schema`: implementation support and access status.
+- `POST audio-references`: `{name, base64}` with an Idempotency-Key.
+- `GET audio-references/{id}` and `/download`: private source metadata/bytes.
+- `POST audio-references/{id}/excerpts`: `{start_s, end_s}`.
+- `GET audio-excerpts/{id}` and `/download`: private exact excerpt.
+- Revisioned scene PATCH `changes.recording`: `{reference_id, excerpt_id,
+  character_id?}`; `null` removes the attachment.
+
+Local policy accepts WAV/MP3 up to 64 MiB, sources up to one hour, and excerpts
+up to 15 seconds. These are local limits, not verified provider format limits.
+No trim changes the shot duration or time-stretches the source. Validation reports
+mismatches through `effective_audio_reference` and warnings.
+
+**Submission lifecycle:** local validation performs no upload or network exposure.
+After explicit generation approval, the worker starts an isolated one-file HTTP
+server on loopback and exposes only its random audio path through the `cf tunnels
+quick-start` CLI. The cf CLI must be installed. No Cloudflare account is required.
+This development relay closes on job completion/failure and has a one-hour limit.
+It never exposes the Studio server or a directory. Anyone holding the full random
+HTTPS URL can access the excerpt while the relay is active; no credentials are
+included in the URL. Provider failures are reported without automatic retry.
+No paid generation occurs from preview or validation. Custom-audio API entitlement
+and singing fidelity remain unverified until a real provider render succeeds.
+Quick Tunnels are for development/testing; use stable, controlled storage for a
+production deployment.
+
+Immutable source/excerpt records retain their hashes. Per-generation
+`audio_provider_uploads` records transport, hash, size and maximum lifetime,
+without storing a bearer URL. `provider_upload_id` remains null for relayed audio.
+Request snapshots freeze the exact recording bytes privately with an audio tag
+and hash, alongside the starting frame and visual references.
+
+```python
+source = client.upload_audio_reference('/private/vocal.wav', idempotency_key='vocal-import-v1')
+excerpt = client.prepare_audio_excerpt(source, 0, 9)
+draft = client.attach_audio_reference(draft, source, excerpt, character_id=leo_id)
+validation = client.validate(draft)  # inspect warnings and exact effective inputs
+# Only after reviewing the concrete request and approving provider use:
+# job = client.generate(draft, approved=True, idempotency_key='singing-pilot-v1')
+```
+
+Contract sources:
+https://docs.x.ai/cookbook/examples/photo-to-talking-character
+https://docs.x.ai/developers/files/managing-files
+https://docs.x.ai/developers/files/public-urls
+
+
+### Live recording pilot limitation (2026-10-27)
+
+Live job `674861d1f88a41c8b3a46c4c85304cf1` uploaded the WAV but failed before video submission. The xAI Files public-URL endpoint returned HTTP 400: audio content is unsupported (allowed types listed images, MP4/WebM and PDF). The service classified the WAV as `application/octet-stream` despite the multipart audio/wav declaration. Do not disguise audio as an accepted media type. An alternative provider-fetchable audio URL transport is required; custom recording entitlement on the video endpoint remains untested. Public URLs must inherit the expiring file lifetime (`json={}`), rather than request another full hour after upload. Mock transport tests do not prove live audio support.
+
+
+### Live HTTPS transport and account denial (2026-10-27)
+
+The one-file relay supersedes the failed xAI Files audio-public-URL approach.
+Live job `cfd9417867864ed087ea00a68ec5756b` verified 1,728,138 bytes against the
+recording SHA-256, then reached the video-generation endpoint. xAI returned HTTP
+403: `Caller-supplied URLs in reference_audios are not enabled for this team.`
+No video request ID/output was returned. The relay stopped afterward. This
+confirms a team capability denial on this connection; it does not establish
+that OAuth can never receive partner access. Have xAI enable the capability
+before retrying. Do not attempt alternate credentials or substitute preset speech.
+
+## Song Performance workspace
+
+Plan song-clock shots, review take windows and assemble separate working edits
+inside Studio. See Song Performance (internal record omitted from public source) and the
+complete Agent API example (internal record omitted from public source). Local import/analysis works
+without custom-recording generation permission; no planning action generates video.
+
+Workspace account status keeps `identity_provider` and `grok_identity_available` separate from `grok_connection`: Grok subscription access is not a Studio identity provider. `grok_connection.signed_in` reports the saved connection; `verified: false` means this read did not contact xAI. Use the explicit Grok model-access check to verify it without generating media. Connection checks time out with a recoverable message.
+
+To record a directly authored video prompt, POST `scenes/{id}/review-prompt` with `expected_revision`, `reviewed: true`, and `authored_by: "agent"` (or `"human"`). Validation returns `prompt_provenance` and `prompt_review_provenance`, including whether the review is current. Edits invalidate its revision. This records review only; generation still requires separate human authorization.
+
+### First-frame prompt tags
+
+`<IMAGE_0>` stays in the compiled prompt intentionally. It is xAI positional prompt syntax; `image` is the JSON field carrying the pinned first frame. With `image` set, the starting frame takes `<IMAGE_0>` and `reference_images` starts at `<IMAGE_1>`. Without a starting frame, references start at `<IMAGE_0>`. Last frames and keyframes use their separate controls, not extra numbered reference positions. Studio validates this mapping and rejects missing positions. See [xAI reference-to-video input ordering](https://docs.x.ai/developers/model-capabilities/video/reference-to-video). No live generation was needed to verify the documented contract.
+
+Dialogue preflight adds the non-blocking `dialogue_timing` warning for explicitly quoted spoken lines when `word_count / 2.5 + 1` exceeds the clip duration. The extra second reserves about 0.5s at each end. Script and prompt copies are not counted twice. This is an estimate; the app never edits dialogue, duration or shot structure automatically.
+
+
 ## Workshop prompts, image-sourced Bible changes, and Grok usage
 
 All `filmmaking/series/{id}/...` routes accept either the linked story series ID
