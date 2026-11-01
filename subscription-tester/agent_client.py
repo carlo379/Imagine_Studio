@@ -2,6 +2,7 @@
 import argparse
 import base64
 import json
+import os
 import time
 from pathlib import Path
 from urllib.error import HTTPError
@@ -50,6 +51,28 @@ class StudioClient(SongClient):
             except (ValueError,AttributeError):detail={}
             finally:e.close()
             raise AgentError(e.code,detail.get('code','http_error'),detail.get('message','Local API request failed.')) from None
+
+    def import_project(self, path):
+        """Upload a raw ZIP without buffering it; poll project-archives/{id}."""
+        with Path(path).expanduser().open('rb') as source:
+            length = os.fstat(source.fileno()).st_size
+            req = Request(self.base + '/project-archives/import', data=source,
+                          headers={'Authorization': 'Bearer ' + self.token,
+                                   'Content-Type': 'application/zip',
+                                   'Content-Length': str(length)}, method='POST')
+            try:
+                # urllib/http.client streams file objects in bounded blocks.
+                with self.opener.open(req, timeout=300) as response:
+                    return json.load(response)
+            except HTTPError as e:
+                try:
+                    detail = json.loads(e.read()).get('error', {})
+                except (ValueError, AttributeError):
+                    detail = {}
+                finally:
+                    e.close()
+                raise AgentError(e.code, detail.get('code', 'http_error'),
+                                 detail.get('message', 'Local API upload failed.')) from None
 
     def list_revisions(self,timeline_id):
         return self.request('editing/timelines/'+timeline_id+'/revisions')

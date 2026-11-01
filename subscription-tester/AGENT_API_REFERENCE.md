@@ -1101,113 +1101,93 @@ reports ready, pending, uncached or unavailable. Pending placeholders are not ca
 
 ### Portable project archives
 
-`POST /agent/v1/productions/{id}/export` with `{}` starts a background export.
-`GET /agent/v1/project-archives/{id}` returns `status`, `progress`, `message`, and
-on completion `report`, counts and the local browser `download` URL. Poll until
-`done` or `error`. Exports never generate media; active project jobs must finish
-first. The archive excludes credentials and unrelated workspace content.
+| Method | Route | Result |
+| --- | --- | --- |
+| POST | `/productions/{id}/export` | Empty JSON object; HTTP 202 export task |
+| POST | `/project-archives/import` | Raw ZIP body; HTTP 202 import task |
+| GET | `/project-archives/{id}` | HTTP 200 task status, including failures; 404 for unknown tasks |
 
-ZIP upload/download use the local browser session: `POST
-/api/project-archives/import` accepts a raw ZIP body (Content-Type
-`application/zip`, local Origin and `X-Tester: local`); `GET
-/api/project-archives/{id}/download` streams the finished ZIP. These browser routes
-require a workspace session. Import always creates fresh project/asset IDs.
-See the User guide for archive contents, completeness reporting and size limits.
-
-## Uploaded recording references
-
-Uploaded WAV/MP3 recordings can be attached to full Grok Video 1.5 drafts at
-480p/720p. The scene compiler assigns `<AUDIO_0>` to the recording, just as preset
-voices receive audio tags. An optional character association adds its name to
-that mapping. Remove preset voices explicitly before attaching a recording.
-
-This implementation uses the documented `reference_audios: [{"url": "..."}]`
-contract. xAI documents custom recording access as restricted to trusted partners.
-Account entitlement and exact song/lip synchronization remain **unverified**.
-Validation succeeds locally with a warning; only a live provider response can
-establish account acceptance. There is no silent preset or unconditioned fallback.
-
-Local upload/trim/preview routes and SDK helpers are unchanged:
-
-- `GET audio-references/schema`: implementation support and access status.
-- `POST audio-references`: `{name, base64}` with an Idempotency-Key.
-- `GET audio-references/{id}` and `/download`: private source metadata/bytes.
-- `POST audio-references/{id}/excerpts`: `{start_s, end_s}`.
-- `GET audio-excerpts/{id}` and `/download`: private exact excerpt.
-- Revisioned scene PATCH `changes.recording`: `{reference_id, excerpt_id,
-  character_id?}`; `null` removes the attachment.
-
-Local policy accepts WAV/MP3 up to 64 MiB, sources up to one hour, and excerpts
-up to 15 seconds. These are local limits, not verified provider format limits.
-No trim changes the shot duration or time-stretches the source. Validation reports
-mismatches through `effective_audio_reference` and warnings.
-
-**Submission lifecycle:** local validation performs no upload or network exposure.
-After explicit generation approval, the worker starts an isolated one-file HTTP
-server on loopback and exposes only its random audio path through the `cf tunnels
-quick-start` CLI. The cf CLI must be installed. No Cloudflare account is required.
-This development relay closes on job completion/failure and has a one-hour limit.
-It never exposes the Studio server or a directory. Anyone holding the full random
-HTTPS URL can access the excerpt while the relay is active; no credentials are
-included in the URL. Provider failures are reported without automatic retry.
-No paid generation occurs from preview or validation. Custom-audio API entitlement
-and singing fidelity remain unverified until a real provider render succeeds.
-Quick Tunnels are for development/testing; use stable, controlled storage for a
-production deployment.
-
-Immutable source/excerpt records retain their hashes. Per-generation
-`audio_provider_uploads` records transport, hash, size and maximum lifetime,
-without storing a bearer URL. `provider_upload_id` remains null for relayed audio.
-Request snapshots freeze the exact recording bytes privately with an audio tag
-and hash, alongside the starting frame and visual references.
+Agent upload uses the normal local bearer token. It requires no cookies, browser
+session, Origin, `X-Tester`, or generation approval. Send `Content-Type:
+application/zip` and an exact `Content-Length`. Multipart, JSON/base64 and chunked
+uploads are unsupported. `StudioClient.import_project(path)` uses a file object
+and streams bytes without buffering the whole ZIP. Its upload socket timeout is
+300 seconds; a timeout after submission does not establish that import failed.
+Do not automatically retry an uncertain upload: each accepted import creates a
+separate copy and there is no import idempotency key.
 
 ```python
-source = client.upload_audio_reference('/private/vocal.wav', idempotency_key='vocal-import-v1')
-excerpt = client.prepare_audio_excerpt(source, 0, 9)
-draft = client.attach_audio_reference(draft, source, excerpt, character_id=leo_id)
-validation = client.validate(draft)  # inspect warnings and exact effective inputs
-# Only after reviewing the concrete request and approving provider use:
-# job = client.generate(draft, approved=True, idempotency_key='singing-pilot-v1')
+import time
+from agent_client import StudioClient
+
+# Match the port and private token file to the intended workspace.
+client = StudioClient(base_url="http://127.0.0.1:8766")
+task = client.import_project("/absolute/path/exported-project.zip")
+while task["status"] == "working":
+    time.sleep(0.5)
+    task = client.request("project-archives/" + task["id"])
+if task["status"] != "done":
+    raise RuntimeError(task.get("error", {}).get("message", task["message"]))
+new_project_id = task["project_id"]
 ```
 
-Contract sources:
-https://docs.x.ai/cookbook/examples/photo-to-talking-character
-https://docs.x.ai/developers/files/managing-files
-https://docs.x.ai/developers/files/public-urls
+The token is read locally and never printed. For an isolated `--state-dir`, pass
+its `agent-token` path explicitly to the client. Upload/poll responses use:
 
+```json
+{"id":"<task-id>","operation":"import","status":"working","progress":0,"message":"Preparing project…"}
+```
 
-### Live recording pilot limitation (2026-10-27)
+Successful imports have `status: "done"`, `progress: 100`, `project_id` (the new
+root project ID), `title` (original title), `record_count`, `file_count`, and
+`report: {complete, missing_files, remote_references}`. Failed imports have
+`status: "error"`, `message`, and `error: {code, message}`; they have no successful
+`project_id`. Progress is informational, including on failure. The HTTP 202 body
+may already contain a terminal state if the worker finishes quickly. Polling
+continues to return HTTP 200 for failed tasks; inspect `status`.
 
-Live job `674861d1f88a41c8b3a46c4c85304cf1` uploaded the WAV but failed before video submission. The xAI Files public-URL endpoint returned HTTP 400: audio content is unsupported (allowed types listed images, MP4/WebM and PDF). The service classified the WAV as `application/octet-stream` despite the multipart audio/wav declaration. Do not disguise audio as an accepted media type. An alternative provider-fetchable audio URL transport is required; custom recording entitlement on the video endpoint remains untested. Public URLs must inherit the expiring file lifetime (`json={}`), rather than request another full hour after upload. Mock transport tests do not prove live audio support.
+Imports reuse the browser archive service: validate, stage, remap identities,
+restore local media, then publish with rollback. Existing projects are retained;
+the imported root is titled `original title (imported)`. Scripts, hierarchy,
+references, saved approval state, and revision history are preserved. Imported
+interrupted work is marked as an error and made non-recoverable. Import never
+generates media, resumes provider work, fetches remote references or incurs
+provider charges. Missing files/external URLs remain disclosed in the report.
 
+Limits (binary units): 1 byte–20 GiB upload, 50 GiB total expanded ZIP members,
+100,000 members, 512 MiB `project.json`, 64 MiB per restored editing JSON document;
+currently format version 1. These limits are discoverable in `GET schema` under
+`project_archives` and in the OpenAPI operation’s `x-archive-limits`. Duplicate entries, unsafe paths, symlinks, encrypted
+entries, unsupported versions, invalid records and media checksum mismatches
+fail validation before publication. The upload file and staging directory are
+removed after normal completion or failure. One archive export/import worker
+runs at a time; a competing start returns 409 and removes its upload.
 
-### Live HTTPS transport and account denial (2026-10-27)
+| Failure | Result |
+| --- | --- |
+| Missing/invalid bearer token or foreign browser origin | 403 `agent_auth_required` |
+| Invalid Content-Length / Transfer-Encoding | 400 `invalid_upload` |
+| Empty, missing-length or oversized body | 413 `archive_limit` |
+| Wrong Content-Type | 415 `invalid_upload` |
+| Export/import already running | 409 `archive_busy` |
+| Interrupted upload | 400 `invalid_archive`; temporary upload removed |
+| Local storage error receiving upload | 500 `storage_error` |
+| Malformed/unsafe ZIP, record or checksum failure | Accepted task ends with `error.code: "invalid_archive"` |
+| Unsupported archive format/version | Accepted task ends with `error.code: "archive_version"` |
+| Other worker/storage failure | Accepted task ends with `error.code: "archive_failed"` |
 
-The one-file relay supersedes the failed xAI Files audio-public-URL approach.
-Live job `cfd9417867864ed087ea00a68ec5756b` verified 1,728,138 bytes against the
-recording SHA-256, then reached the video-generation endpoint. xAI returned HTTP
-403: `Caller-supplied URLs in reference_audios are not enabled for this team.`
-No video request ID/output was returned. The relay stopped afterward. This
-confirms a team capability denial on this connection; it does not establish
-that OAuth can never receive partner access. Have xAI enable the capability
-before retrying. Do not attempt alternate credentials or substitute preset speech.
+Exports use the same polling endpoint; on success they include counts, `report`
+and a local browser `download` URL. Exports never generate media; active project
+jobs must finish first. Archives exclude credentials and unrelated workspace
+content. ZIP download remains the browser-session route
+`GET /api/project-archives/{id}/download`. The existing browser upload route
+`POST /api/project-archives/import` retains its browser-session, local Origin and
+`X-Tester: local` requirements; agents should use the new Agent API route.
 
-## Song Performance workspace
-
-Plan song-clock shots, review take windows and assemble separate working edits
-inside Studio. See Song Performance (internal record omitted from public source) and the
-complete Agent API example (internal record omitted from public source). Local import/analysis works
-without custom-recording generation permission; no planning action generates video.
-
-Workspace account status keeps `identity_provider` and `grok_identity_available` separate from `grok_connection`: Grok subscription access is not a Studio identity provider. `grok_connection.signed_in` reports the saved connection; `verified: false` means this read did not contact xAI. Use the explicit Grok model-access check to verify it without generating media. Connection checks time out with a recoverable message.
-
-To record a directly authored video prompt, POST `scenes/{id}/review-prompt` with `expected_revision`, `reviewed: true`, and `authored_by: "agent"` (or `"human"`). Validation returns `prompt_provenance` and `prompt_review_provenance`, including whether the review is current. Edits invalidate its revision. This records review only; generation still requires separate human authorization.
-
-### First-frame prompt tags
-
-`<IMAGE_0>` stays in the compiled prompt intentionally. It is xAI positional prompt syntax; `image` is the JSON field carrying the pinned first frame. With `image` set, the starting frame takes `<IMAGE_0>` and `reference_images` starts at `<IMAGE_1>`. Without a starting frame, references start at `<IMAGE_0>`. Last frames and keyframes use their separate controls, not extra numbered reference positions. Studio validates this mapping and rejects missing positions. See [xAI reference-to-video input ordering](https://docs.x.ai/developers/model-capabilities/video/reference-to-video). No live generation was needed to verify the documented contract.
-
-Dialogue preflight adds the non-blocking `dialogue_timing` warning for explicitly quoted spoken lines when `word_count / 2.5 + 1` exceeds the clip duration. The extra second reserves about 0.5s at each end. Script and prompt copies are not counted twice. This is an estimate; the app never edits dialogue, duration or shot structure automatically.
+Task IDs are workspace scoped. Completed/error tasks are persisted; active tasks
+are not resumed after server termination. Abrupt process termination can leave
+staging/upload files; graceful error cleanup cannot run in that case. The server
+must load the updated implementation before the new route is available.
 
 
 ## Workshop prompts, image-sourced Bible changes, and Grok usage

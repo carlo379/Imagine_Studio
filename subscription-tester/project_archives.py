@@ -140,6 +140,8 @@ class ProjectArchives:
         try:
             self.app.spawn(self.worker, identity, operation, argument)
         except Exception:
+            with self.lock:
+                self.jobs.pop(identity, None)
             self.operation.release()
             raise
         return self.status(identity)
@@ -150,7 +152,7 @@ class ProjectArchives:
             self.update(identity, status='done', progress=100, message='Project archive ready.' if operation == 'export' else 'Project imported as a separate copy.', **result)
         except Exception as exc:
             message = 'The ZIP is damaged or could not be read.' if isinstance(exc,(zipfile.BadZipFile,EOFError)) else str(exc) if isinstance(exc, APIError) else 'Project archive failed. Check available disk space and try again.'
-            self.update(identity, status='error', message=message)
+            self.update(identity, status='error', message=message, error={'code': exc.code if isinstance(exc, APIError) else 'invalid_archive' if isinstance(exc, (zipfile.BadZipFile, EOFError)) else 'archive_failed', 'message': message})
         finally:
             if operation == 'import':
                 Path(argument).unlink(missing_ok=True)
@@ -619,6 +621,39 @@ class ProjectArchives:
                     for dest in moved: dest.unlink(missing_ok=True)
                 raise
 
+    def receive_upload(self, handler):
+        """Stream a raw ZIP; caller authenticates before reading any bytes.
+
+        Ownership of the private temporary file passes to the existing worker
+        only after start succeeds. Every earlier failure removes it here.
+        """
+        if handler.headers.get('Transfer-Encoding'):
+            raise APIError('invalid_upload', 'Use Content-Length; chunked uploads are not supported.')
+        try:
+            length = int(handler.headers.get('Content-Length', '0'))
+        except ValueError:
+            raise APIError('invalid_upload', 'Content-Length must be an integer.') from None
+        if not 0 < length <= MAX_ARCHIVE:
+            raise APIError('archive_limit', 'Project ZIP files must be between 1 byte and 20 GB.', 413)
+        if handler.headers.get('Content-Type', '').split(';')[0].strip().lower() != 'application/zip':
+            raise APIError('invalid_upload', 'Send a raw ZIP body with Content-Type: application/zip.', 415)
+        if self.operation.locked():
+            raise APIError('archive_busy', 'Wait for the current project export or import.', 409)
+        fd, name = tempfile.mkstemp(prefix='upload-', suffix='.zip', dir=self.folder)
+        try:
+            with os.fdopen(fd, 'wb') as out:
+                remaining = length
+                while remaining:
+                    chunk = handler.rfile.read(min(1024 * 1024, remaining))
+                    if not chunk:
+                        raise APIError('invalid_archive', 'The project upload was interrupted.')
+                    out.write(chunk)
+                    remaining -= len(chunk)
+            return self.start('import', name)
+        except BaseException:
+            Path(name).unlink(missing_ok=True)
+            raise
+
     def route(self, handler, method):
         """Browser ZIP transfer is streamed, separate from JSON upload limits."""
         try:
@@ -630,20 +665,7 @@ class ProjectArchives:
             if method == 'GET' and len(parts)==2 and parts[1]=='download':
                 return handler.media(self.download(parts[0]),'application/zip','Imagine Studio project.zip')
             if method == 'POST' and parts == ['import']:
-                length=int(handler.headers.get('Content-Length','0'))
-                if not 0 < length <= MAX_ARCHIVE:
-                    raise APIError('archive_limit','Project ZIP files must be between 1 byte and 20 GB.',413)
-                fd,name=tempfile.mkstemp(prefix='upload-',suffix='.zip',dir=self.folder)
-                try:
-                    with os.fdopen(fd,'wb') as out:
-                        remaining=length
-                        while remaining:
-                            chunk=handler.rfile.read(min(1024*1024,remaining))
-                            if not chunk: raise APIError('invalid_archive','The project upload was interrupted.')
-                            out.write(chunk);remaining-=len(chunk)
-                    result=self.start('import',name)
-                except Exception:
-                    Path(name).unlink(missing_ok=True);raise
+                result=self.receive_upload(handler)
                 return handler.send(202,result)
             raise APIError('not_found','Project archive route not found.',404)
         except APIError as exc:

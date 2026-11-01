@@ -15,6 +15,7 @@ features, use the [API reference](AGENT_API_REFERENCE.md).
 - [Image workflow](#image-workflow)
 - [Revisions, jobs and retries](#revisions-jobs-and-retries)
 - [Choose a workflow](#choose-a-workflow)
+- [Import an exported project](#import-an-exported-project)
 - [Handle errors](#handle-errors)
 
 ## Connect safely
@@ -181,6 +182,30 @@ specific endpoint contract for other request requirements.
 
 The SDK also has a CLI: `.venv/bin/python agent_client.py schema`. Use JSON body
 files for mutations rather than embedding complex JSON in shell commands.
+
+## Import an exported project
+
+Upload through the Agent API using the same local bearer token. No browser
+session or generation approval is required. `import_project` streams the ZIP:
+
+```python
+import time
+
+task = client.import_project("/absolute/path/exported-project.zip")
+while task["status"] == "working":
+    time.sleep(0.5)
+    task = client.request("project-archives/" + task["id"])
+if task["status"] != "done":
+    raise RuntimeError(task["message"])
+new_project_id = task["project_id"]
+```
+
+The route is `POST /agent/v1/project-archives/import`, with raw `application/zip`
+bytes and Content-Length; it returns HTTP 202. Uploads are limited to 20 GiB.
+Import creates fresh IDs, preserves saved project/media/approval state, and never
+generates media or resumes interrupted generation. Check the returned completeness
+report for missing files and external references. See [archive limits, response
+shapes and errors](AGENT_API_REFERENCE.md#portable-project-archives).
 
 ## Handle errors
 

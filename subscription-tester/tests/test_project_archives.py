@@ -185,7 +185,7 @@ class ProjectArchiveTests(unittest.TestCase):
         reply=[]
         handler=SimpleNamespace(allowed_host=lambda:True,session_hash='session',server=SimpleNamespace(server_port=8765),headers={},path=task['download'],send=lambda status,data:reply.append((status,data)),media=lambda path,mime,name:reply.append((200,path.read_bytes())))
         self.app.archives.route(handler,'GET');self.assertTrue(reply[-1][1].startswith(b'PK'))
-        raw=reply[-1][1];handler.path='/api/project-archives/import';handler.rfile=io.BytesIO(raw);handler.headers={'Content-Length':str(len(raw))}
+        raw=reply[-1][1];handler.path='/api/project-archives/import';handler.rfile=io.BytesIO(raw);handler.headers={'Content-Length':str(len(raw)), 'Content-Type':'application/zip'}
         self.app.archives.route(handler,'POST');self.assertEqual(reply[-1][0],403)
         handler.headers.update({'Origin':'http://127.0.0.1:8765','X-Tester':'local'})
         with patch.object(self.app,'spawn',side_effect=lambda target,*args:target(*args)):

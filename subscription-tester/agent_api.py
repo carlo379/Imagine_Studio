@@ -331,10 +331,14 @@ class AgentAPI:
             logging.getLogger(__name__).info('Studio API %s: lock_wait_ms=%.1f work_ms=%.1f',method,(acquired-started)*1000,(time.monotonic()-acquired)*1000)
         return result
 
-    def _dispatch(self, method, path, data, key):
+    def _dispatch(self, method, path, data, key, *, upload=None):
         parts=path.strip('/').split('/')
         if parts[:2]!=['agent','v1']:raise APIError('not_found','Unknown API version.',404)
         parts=parts[2:]
+        if parts == ['project-archives', 'import'] and method == 'POST':
+            if upload is None:
+                raise APIError('invalid_upload', 'Use a raw application/zip upload, not JSON.', 415)
+            return 202, self.app.archives.receive_upload(upload)
         if len(parts)==3 and parts[0]=='productions' and parts[2]=='export' and method=='POST':
             if data != {}: raise APIError('invalid_request','Project export accepts an empty JSON object.')
             self.app.productions.get(parts[1], 'production')
@@ -412,6 +416,7 @@ class AgentAPI:
             return 200,{'version':'1','scene_defaults':blank(),'models':MODELS,'model_capabilities':MODEL_CAPABILITIES,'uploaded_audio':__import__('audio_references').capabilities(),'song_performance':self.app.song_performance.schema(),'ratios':RATIOS,'voices':VOICES,'config':self.config,
                 'image_source':{'asset_id':'uploaded-id','alternative':{'url':'https://public.example/image.png'}},
                 'keyframe':'{id, source, slot}; slot is integer seconds × 3',
+                'project_archives':contract['paths']['/project-archives/import']['post']['x-archive-limits'],
                 'routes':[path.lstrip('/') or '/' for path in contract['paths']],
                 'route_methods':{path.lstrip('/') or '/':list(methods) for path,methods in contract['paths'].items()},
                 'frame_tools':{'capture':'POST jobs/{id}/capture-frame with timestamp_s; optional data_url for browser capture','place':'POST assets/{id}/place with target, scene_id and expected_revision OR new_scene=true; keyframes require integer slot'},
@@ -565,6 +570,10 @@ class AgentAPI:
         elif not self.authorized(handler.headers.get('Authorization')) or (origin and origin not in allowed):
             return handler.send(403,{'error':{'code':'agent_auth_required','message':'Local agent bearer token required.'}})
         try:
+            # Binary archive uploads bypass JSON limits, after normal agent auth.
+            if not browser and method == 'POST' and handler.path == '/agent/v1/project-archives/import':
+                status, result = self._dispatch(method, handler.path, {}, None, upload=handler)
+                return handler.send(status, result)
             data={}
             if method not in ('GET',):
                 length=int(handler.headers.get('Content-Length','0'))

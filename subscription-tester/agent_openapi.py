@@ -397,6 +397,38 @@ def specification():
             'content':{mime:{'schema':{'type':'string','format':'binary'}} for mime in ('audio/wav','audio/mpeg')}}
     from song_contracts import contracts as song_contracts
     parity_schemas.update(song_contracts(paths,operation))
+    from project_archives import MAX_ARCHIVE, MAX_EXPANDED, MAX_JSON, MAX_DOCUMENT_JSON, MAX_MEMBERS, VERSION
+    parity_schemas['ProjectArchiveTask'] = {
+        'type': 'object', 'required': ['id', 'operation', 'status', 'message', 'progress'],
+        'properties': {
+            'id': {'type': 'string'}, 'operation': {'enum': ['import', 'export']},
+            'status': {'enum': ['working', 'done', 'error']},
+            'message': {'type': 'string'}, 'progress': {'type': 'integer', 'minimum': 0, 'maximum': 100},
+            'project_id': {'type': 'string', 'description': 'New root project ID on successful import'},
+            'title': {'type': 'string'}, 'record_count': {'type': 'integer'}, 'file_count': {'type': 'integer'},
+            'report': {'type': 'object', 'properties': {'complete': {'type': 'boolean'},
+                'missing_files': {'type': 'array', 'items': {'type': 'string'}},
+                'remote_references': {'type': 'array', 'items': {'type': 'string'}}}},
+            'download': {'type': 'string', 'description': 'Browser download URL for exports only'},
+            'error': {'type': 'object', 'required': ['code', 'message'],
+                      'properties': {'code': {'type': 'string'}, 'message': {'type': 'string'}}}}}
+    archive_response = {'description': 'Archive task; poll until done or error',
+                        'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ProjectArchiveTask'}}}}
+    paths['/project-archives/import'] = {'post': {
+        'summary': 'Upload a project ZIP and asynchronously import a fresh copy; never generate media',
+        'description': 'Bearer token only; raw ZIP, no multipart or chunked encoding. Validation failures appear on the task. No browser consent required.',
+        'x-archive-limits': {'max_upload_bytes': MAX_ARCHIVE, 'max_expanded_bytes': MAX_EXPANDED,
+                             'max_project_json_bytes': MAX_JSON, 'max_document_json_bytes': MAX_DOCUMENT_JSON,
+                             'max_members': MAX_MEMBERS, 'format_version': VERSION},
+        'parameters': [{'in': 'header', 'name': 'Content-Length', 'required': True,
+                        'schema': {'type': 'integer', 'minimum': 1, 'maximum': MAX_ARCHIVE}}],
+        'requestBody': {'required': True, 'content': {'application/zip': {'schema': {'type': 'string', 'format': 'binary'}}}},
+        'responses': {'202': archive_response, **{code: {'description': description} for code, description in {
+            '400': 'Invalid upload framing or interrupted upload', '403': 'Local bearer authentication required',
+            '409': 'archive_busy: export or import already running', '413': 'archive_limit: empty or oversized upload',
+            '415': 'invalid_upload: Content-Type must be application/zip', '500': 'storage_error: local storage unavailable'}.items()}}}}
+    paths['/project-archives/{id}']['get']['responses'] = {'200': archive_response, '403': {'description': 'Authentication required'}, '404': {'description': 'Task not found'}}
+    paths['/productions/{id}/export']['post']['responses']['202'] = archive_response
     for path,methods in paths.items():
         for method,op in methods.items():
             op['operationId']=method+'_'+path.strip('/').replace('/','_').replace('{id}','by_id').replace('.','_')
