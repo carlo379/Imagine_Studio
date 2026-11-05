@@ -191,12 +191,82 @@ class OpenAIImageTests(unittest.TestCase):
                 client=cls.return_value
                 client.account.return_value={'signed_in':True}
                 client.rpc.side_effect=lambda method,params: {'imageGeneration':True} if method=='modelProvider/capabilities/read' else {'thread':{'id':'test'}} if method=='thread/start' else {}
+                if events[-1].get('method') == 'item/completed':
+                    events = events + [{'method':'turn/completed','params':{'turn':{'status':'failed'}}}]
                 client.receive.side_effect=events
                 with self.assertRaisesRegex(ValueError,expected) as failure:
                     provider.generate_subscription({'model':'gpt-image-2','prompt':'A circle.'},studio.CONFIG)
                 self.assertNotIn('sk-secret',str(failure.exception))
                 self.assertEqual(sum(call.args[0]=='turn/start' for call in client.rpc.call_args_list),1)
                 client.close.assert_called_once()
+
+    def test_late_turn_reason_and_diagnostic_fields(self):
+        events = [
+            {'method':'item/completed','params':{'item':{'type':'imageGeneration','id':'item-1','status':'failed'}}},
+            {'method':'turn/completed','params':{'turn':{'id':'turn-1','status':'failed','error':{
+                'message':'Image backend unavailable', 'additionalDetails':'Request failed at gateway',
+                'codexErrorInfo':{'httpConnectionFailed':{'httpStatusCode':503}},
+                'prompt':'PRIVATE PROMPT', 'headers':{'cookie':'PRIVATE COOKIE'}}}}}]
+        with patch.object(provider, 'CodexRPC') as cls:
+            client=cls.return_value
+            client.account.return_value={'signed_in':True}
+            client.rpc.side_effect=lambda method,params: {'imageGeneration':True} if method=='modelProvider/capabilities/read' else {'thread':{'id':'thread-test'}} if method=='thread/start' else {}
+            client.receive.side_effect=events
+            with self.assertRaises(ValueError) as caught:
+                provider.generate_subscription({'model':'gpt-image-2','prompt':'PRIVATE PROMPT'},studio.CONFIG)
+            message=str(caught.exception)
+            for text in ('backend unavailable','gateway','503','item-1','turn-1','thread-test'):
+                self.assertIn(text,message)
+            self.assertNotIn('PRIVATE', message)
+            self.assertEqual(sum(c.args[0]=='turn/start' for c in client.rpc.call_args_list),1)
+            client.close.assert_called_once()
+
+    def test_worker_persists_safe_reason_without_retry(self):
+        import json
+        self.app.mock=False
+        draft=self.draft('gpt-image-2')
+        message='Codex image generation failed. Gateway unavailable [thread=t; turn=u; item=i; status=failed]'
+        with patch.object(provider,'generate_subscription',side_effect=ValueError(message)) as generate:
+            job=self.generate(draft)
+        self.assertEqual(job['status'],'error')
+        self.assertIn('Gateway unavailable',job['message'])
+        self.assertIn('thread=t',job['message'])
+        self.assertIn('No automatic retry',job['message'])
+        generate.assert_called_once()
+        with self.app.images.lock:
+            saved=json.loads(self.app.images.path.read_text())
+        self.assertEqual(next(j for j in saved['jobs'] if j['id']==job['id'])['message'],job['message'])
+
+    def test_no_reason_is_distinct_from_transport_failure(self):
+        message=str(provider.image_failure('', 'thread=t; turn=u; status=failed'))
+        self.assertIn('Upstream reported no failure reason',message)
+        self.assertNotIn('connection failed',message)
+
+    def test_structured_usage_reason_and_redaction(self):
+        self.assertIn('usageLimitExceeded',provider.failure_reason({'type':'usageLimitExceeded','limitId':'image','resetsAt':123}))
+        message=provider.failure_reason({'message':'Denied Bearer secret https://host/private?token=secret /Users/private/file', 'headers':{'token':'hidden'}})
+        for text in ('secret','/Users/private','hidden','https://host'):
+            self.assertNotIn(text,message)
+
+    def test_rpc_reader_distinguishes_parse_failure_and_disconnect(self):
+        import io, queue
+        from types import SimpleNamespace
+        for raw, expected in [('not json\n','parsing failed'), ('[]\n','parsing failed'), ('{}','truncated'), ('','stopped')]:
+            client=provider.CodexRPC.__new__(provider.CodexRPC)
+            client.process=SimpleNamespace(stdout=io.StringIO(raw))
+            client.queue=queue.Queue();client.deadline=provider.time.monotonic()+5
+            client.read()
+            with self.assertRaisesRegex(ValueError,expected):client.receive()
+
+    def test_rpc_preserves_notifications_before_response(self):
+        import queue
+        client=provider.CodexRPC.__new__(provider.CodexRPC)
+        client.queue=queue.Queue();client.deadline=provider.time.monotonic()+5;client.sequence=0
+        event={'method':'error','params':{'error':{'message':'Early failure'}}}
+        client.queue.put(event);client.queue.put({'id':1,'result':{}})
+        with patch.object(client,'send'):
+            self.assertEqual(client.rpc('turn/start',{}),{})
+        self.assertEqual(client.receive(),event)
 
     def test_subscription_cannot_accept_25_or_fall_back(self):
         with patch.object(provider, 'CodexRPC') as rpc:

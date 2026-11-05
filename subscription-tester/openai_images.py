@@ -50,8 +50,37 @@ def codex_path():
 def safe_error(value):
     value = re.sub(r'data:[^\s\"\']+', '[image data omitted]', str(value))
     text = re.sub(r'(?i)Bearer\s+\S+|(?:sk-|xai-)[A-Za-z0-9_-]+', '[redacted]', str(value))
+    text = re.sub(r'https?://[^\s\"\']+|/(?:Users|home|tmp|private)/[^\s\"\']+', '[location omitted]', text)
+    text = re.sub(r'(?i)(?:access_token|refresh_token|api_key|cookie|authorization)\s*[=:]\s*[^\s,;]+', '[redacted]', text)
     text = re.sub(r'eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+', '[redacted]', text)
     return ' '.join(text.split())[:700]
+
+
+def failure_reason(value, depth=0):
+    """Read only documented diagnostic fields; never serialize whole events."""
+    if depth > 4:
+        return ''
+    if isinstance(value, str):
+        return safe_error(value)
+    if type(value) is int:
+        return str(value)
+    if not isinstance(value, dict):
+        return ''
+    parts = []
+    for key in ('message', 'reason', 'failure', 'error', 'additionalDetails', 'code',
+                'codexErrorInfo', 'httpStatusCode', 'type', 'limitId', 'resetsAt'):
+        part = failure_reason(value.get(key), depth + 1)
+        if part and part not in parts:
+            parts.append(part)
+    for key in ('httpConnectionFailed', 'responseStreamConnectionFailed', 'responseStreamDisconnected', 'responseTooManyFailedAttempts'):
+        if key in value:
+            parts.append(key + ': ' + failure_reason(value[key], depth + 1))
+    return safe_error('; '.join(parts))
+
+
+def image_failure(reason, context):
+    detail = reason or 'Upstream reported no failure reason.'
+    return ValueError('Codex image generation failed. ' + detail[:350] + ' [' + context[:250] + ']')
 
 
 class CodexRPC:
@@ -89,10 +118,16 @@ class CodexRPC:
                 if not line:
                     break
                 if not line.endswith('\n'):
+                    self.queue.put({'_transport_failure': 'Codex response parsing failed: truncated or oversized JSON frame.'})
                     break
-                self.queue.put(json.loads(line))
-        except (ValueError, OSError):
-            pass
+                value = json.loads(line)
+                if not isinstance(value, dict):
+                    raise ValueError('Invalid RPC envelope')
+                self.queue.put(value)
+        except ValueError:
+            self.queue.put({'_transport_failure': 'Codex response parsing failed: invalid JSON or RPC envelope.'})
+        except OSError:
+            self.queue.put({'_transport_failure': 'Codex connection failed while reading a response.'})
         finally:
             self.queue.put(None)
 
@@ -101,6 +136,12 @@ class CodexRPC:
         self.process.stdin.flush()
 
     def receive(self):
+        pending = getattr(self, 'notifications', [])
+        if pending:
+            return pending.pop(0)
+        return self._receive()
+
+    def _receive(self):
         remaining = self.deadline - time.monotonic()
         if remaining <= 0:
             raise ValueError(self.timeout_message)
@@ -110,6 +151,8 @@ class CodexRPC:
             raise ValueError(self.timeout_message) from None
         if value is None:
             raise ValueError(getattr(self, 'stopped_message', 'Codex stopped before completing the image request.'))
+        if value.get('_transport_failure'):
+            raise ValueError(value['_transport_failure'])
         if 'method' in value and 'id' in value:
             self.send({'id': value['id'], 'error': {'code': -32601,
                        'message': 'Additional actions are not authorized by Image Studio.'}})
@@ -120,10 +163,13 @@ class CodexRPC:
         identity = self.sequence
         self.send({'id': identity, 'method': method, 'params': params})
         while True:
-            value = self.receive()
+            value = self._receive()
+            if 'method' in value and 'id' not in value:
+                if not hasattr(self, 'notifications'): self.notifications = []
+                self.notifications.append(value)
             if value.get('id') == identity and 'method' not in value:
                 if value.get('error'):
-                    raise ValueError('Codex: ' + safe_error(value['error'].get('message', 'request failed')))
+                    raise ValueError('Codex: ' + (failure_reason(value['error']) or 'request failed without a reason'))
                 return value['result']
 
     def account(self):
@@ -320,9 +366,19 @@ def generate_subscription(body, config):
             client.rpc('turn/start', {'threadId': thread, 'input': [{'type': 'text', 'text': prompt}]})
             output = None
             explanation = ''
+            failed_item = None
+            item_reason = ''
+            context = 'thread=' + safe_error(thread)
             while True:
-                event = client.receive()
+                try:
+                    event = client.receive()
+                except ValueError as exc:
+                    if failed_item is not None:
+                        raise image_failure(item_reason or explanation, context + '; ' + safe_error(exc)) from None
+                    raise
                 method, params = event.get('method'), event.get('params', {})
+                if not isinstance(params, dict) or any(key in params and not isinstance(params[key], dict) for key in ('item', 'turn')):
+                    raise ValueError('Codex response parsing failed: invalid event fields. [' + context + ']')
                 if method == 'item/completed' and params.get('item', {}).get('type') == 'agentMessage':
                     explanation = safe_error(params['item'].get('text', '')) or explanation
                 if method == 'item/completed' and params.get('item', {}).get('type') == 'imageGeneration':
@@ -330,20 +386,24 @@ def generate_subscription(body, config):
                     if output is not None:
                         raise ValueError('Codex returned multiple images. Check usage before trying again.')
                     if item.get('status') != 'completed' or item.get('failure'):
-                        detail = safe_error(item.get('failure') or '')
-                        raise ValueError('Codex image generation failed. ' + (detail or 'No failure detail was supplied. Check usage before retrying.'))
+                        failed_item = item
+                        item_reason = failure_reason(item.get('failure')) or failure_reason(item.get('error'))
+                        context += '; item=' + safe_error(item.get('id', 'unknown')) + '; status=' + safe_error(item.get('status'))
+                        # A terminal turn can supply a richer reason after this item.
+                        continue
                     output = decode_output(item.get('result'), config.get('image_output_limit_mb', 20) * 1024 * 1024)
                 if method == 'turn/completed':
-                    if params.get('turn', {}).get('status') != 'completed' or output is None:
+                    if params.get('turn', {}).get('status') != 'completed' or output is None or failed_item is not None:
                         error = params.get('turn', {}).get('error') or {}
-                        detail = safe_error(error.get('message', '') if isinstance(error, dict) else error) or explanation
-                        raise ValueError('Codex did not complete an image. ' + (detail or 'No failure detail was supplied. Check usage before submitting again.'))
+                        detail = '; '.join(filter(None, (item_reason, failure_reason(error)))) or explanation
+                        turn = params.get('turn', {})
+                        raise image_failure(detail, context + '; turn=' + safe_error(turn.get('id', 'unknown')) + '; turn_status=' + safe_error(turn.get('status')))
                     return output, {'requested_model': 'gpt-image-2',
                                     'returned_model': None, 'model_identity': 'unconfirmed'}
                 if method == 'error':
                     error = params.get('error') or {}
-                    detail = safe_error(error.get('message', '') if isinstance(error, dict) else error)
-                    raise ValueError('Codex returned an error. ' + (detail or 'Check subscription usage before retrying.'))
+                    detail = failure_reason(error) or item_reason or explanation
+                    raise image_failure(detail, context + '; event=error')
         finally:
             if client:
                 client.close()

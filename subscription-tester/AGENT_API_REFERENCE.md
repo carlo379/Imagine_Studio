@@ -1475,3 +1475,16 @@ Bearer downloads remain workspace-isolated.
 SDK helpers: `preview_workshop_generation`, `refresh_storybook_links`,
 `production_readiness`, and `rename_image_candidate`. Docstrings specify each
 ID/revision domain. Image-to-Bible helpers retain their existing names.
+
+
+### Codex subscription image failure diagnostics
+
+Failed image jobs retain the sanitized upstream reason in `message`, followed by
+available Codex thread, turn, item IDs and terminal statuses. The adapter collects
+later turn errors after a failed image item, including additional details, error
+codes and HTTP status. If no reason arrives it explicitly says so; connection
+closure, local timeout, and malformed/truncated RPC responses have distinct
+messages. Credentials, inline image data and private URL/path locations are
+redacted. Raw event payloads and prompts are not recorded as diagnostic traces.
+No automatic generation retry or alternate provider is introduced. These details
+apply to new requests; historical messages cannot recover discarded events.
