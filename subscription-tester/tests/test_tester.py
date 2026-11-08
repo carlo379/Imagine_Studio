@@ -46,9 +46,9 @@ class FlowTests(unittest.TestCase):
 
     def test_denied_oauth_does_not_retry_or_echo_response(self):
         import hermes_cli.auth as auth
+        import httpx
         client = MagicMock()
-        client.post.return_value.status_code = 403
-        client.post.return_value.text = 'secret echoed by upstream'
+        client.post.return_value = httpx.Response(403, json={'error': 'Image access denied. Bearer test-secret'})
         with patch.object(auth, 'resolve_xai_oauth_runtime_credentials', return_value={
                 'provider': 'xai-oauth', 'auth_mode': 'oauth_device_code', 'api_key': 'test-secret'}), patch('httpx.Client') as factory:
             factory.return_value.__enter__.return_value = client
@@ -56,6 +56,7 @@ class FlowTests(unittest.TestCase):
             tester.generate('apple')
         self.assertEqual(client.post.call_count, 1)
         self.assertEqual(tester.snapshot()['http_status'], 403)
+        self.assertIn('Image access denied.', tester.snapshot()['message'])
         self.assertNotIn('secret', json.dumps(tester.snapshot()))
 
     def test_api_key_credentials_rejected(self):

@@ -18,6 +18,24 @@ class OpenAIImageTests(unittest.TestCase):
         self.app = studio.Studio(mock=True, storage=self.temp.name)
         self.asset = self.app.upload({'name': 'character.png', 'data_url': PNG})
 
+    def test_openai_http_failures_have_safe_details_or_fallback(self):
+        import httpx
+        for response, reason in (
+            (httpx.Response(400, json={'error': {'message': 'Invalid image size. api_key="fixture-key"'}}), 'Invalid image size.'),
+            (httpx.Response(503), 'no usable error details'),
+            (httpx.Response(200, json={'error': 'The image request failed.'}), 'The image request failed.'),
+        ):
+            with self.subTest(status=response.status_code), patch.object(provider, 'api_key', return_value='fixture-key'), patch('httpx.Client') as factory:
+                post = factory.return_value.__enter__.return_value.post
+                post.return_value = response
+                with self.assertRaises(ValueError) as failure:
+                    provider.generate_api('https://api.openai.com/v1/images/generations',
+                        {'model': provider.API_MODELS[0], 'prompt': 'Landscape.'}, studio.CONFIG)
+                self.assertIn(reason, str(failure.exception))
+                self.assertIn(f'HTTP {response.status_code}', str(failure.exception))
+                self.assertNotIn('fixture-key', str(failure.exception))
+                post.assert_called_once()
+
     def tearDown(self):
         for _ in range(100):
             if all(j['status'] != 'pending' for j in self.app.images.db['jobs']):

@@ -102,6 +102,7 @@ class Tester:
                         message=f'Sign-in failed at {stage}. It may have expired or been denied. No API-key fallback was used.')
 
     def generate(self, prompt):
+        from provider_response import ProviderResponseError, authorization_secrets, response_object
         try:
             if self.mock:
                 time.sleep(.5)
@@ -121,11 +122,14 @@ class Tester:
                             403: 'xAI denied image access for this OAuth account or subscription tier.',
                             402: 'xAI requires additional billing or usage allowance.',
                             429: 'xAI reported a rate or usage limit. No automatic retry was made.'}
-                self.update(phase='error', http_status=status, image=None,
-                            message=messages.get(status, 'xAI rejected the image request. No automatic retry or API-key fallback was made.'))
-                return
-            data = response.json()
-            item = data.get('data', [{}])[0]
+                raise ProviderResponseError('xAI rejected the image request', response, authorization_secrets(headers),
+                    hint=messages.get(status, 'No automatic retry or API-key fallback was made.'))
+            data = response_object(response)
+            items = data.get('data') if data else None
+            if not isinstance(items, list) or not items or not isinstance(items[0], dict):
+                raise ProviderResponseError('xAI returned an unreadable or unexpected image response', response,
+                    authorization_secrets(headers), hint='Check usage before trying again.')
+            item = items[0]
             image = item.get('url')
             if image and urlparse(image).scheme != 'https':
                 image = None
@@ -136,6 +140,8 @@ class Tester:
                     image = f'data:{mime};base64,' + item['b64_json']
             self.update(phase='done', http_status=status, image=image,
                         message='Image API accepted OAuth. Check Grok Settings → Usage to verify the subscription deduction.' if image else 'API returned 200, but no supported image was returned.')
+        except ProviderResponseError as error:
+            self.update(phase='error', http_status=error.http_status, image=None, message=str(error))
         except Exception:
             self.update(phase='error', image=None,
                         message='The request could not complete. Token refresh, network, or response validation failed. No automatic retry was made.')

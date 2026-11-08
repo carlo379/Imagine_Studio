@@ -209,6 +209,21 @@ class ImageStudioTests(unittest.TestCase):
             repeated=self.call('POST','image-studio/drafts/'+r['id']+'/generate',{'expected_revision':1,'approved':True},'stub-rejection-once')
             self.assertEqual(repeated['id'],j['id']);self.assertEqual(client.return_value.__enter__.return_value.post.call_count,1)
 
+    def test_grok_submission_401_keeps_provider_reason(self):
+        import httpx
+        r = self.image()
+        self.app.mock = False
+        response = httpx.Response(401, json={'error': {'message': 'Session scope expired.'}})
+        with patch.dict(studio.CONFIG, {'live_generations_enabled': True}), patch.object(studio, 'oauth_headers', return_value={'Authorization': 'Bearer fake-test-only'}), patch('httpx.Client') as client:
+            post = client.return_value.__enter__.return_value.post
+            post.return_value = response
+            job = self.generate(r, 'stub-session-expired')
+            post.assert_called_once()
+        self.assertIn('HTTP 401', job['message'])
+        self.assertIn('Session scope expired.', job['message'])
+        self.assertIn('Reconnect', job['message'])
+        self.assertEqual(job['error_kind'], 'authentication_expired')
+
     def test_live_transport_stub_no_real_network(self):
         r=self.image();self.app.mock=False
         response=Mock(status_code=200);response.json.return_value={'data':[{'b64_json':PNG.split(',')[1]}]}

@@ -13,3 +13,25 @@ const originalTimer=win.setTimeout.bind(win);win.setTimeout=fn=>originalTimer(fn
 win.fetch=(_path,options)=>new Promise((_resolve,reject)=>options.signal.addEventListener('abort',()=>reject(Object.assign(new Error('aborted'),{name:'AbortError'}))));
 await assert.rejects(recovery.check('grok'),/timed out/);win.setTimeout=originalTimer;
 recovery.mount(host,{message:'Codex allowance exhausted'});assert(host.hidden,'Usage failures do not offer misleading reconnect');dom.window.close();console.log('Recovery: both providers, auth vs quota/timeout, failed/successful verification, explicit single retry and no automatic generation pass.');})().catch(e=>{console.error(e);process.exitCode=1;});
+
+// Video history shows the exact saved job diagnostic and resumes by Studio job ID.
+{
+ const historyDOM=new JSDOM('<div id="history"></div>',{runScripts:'outside-only'});
+ const w=historyDOM.window,document=w.document;
+ const requests=[];
+ const job={id:'saved-video',request_id:'provider-video',created_at:1,status:'error',
+  settings:{duration:4,resolution:'720p'},message:'Video polling stopped (HTTP 400). Invalid request ID.'};
+ w.$=id=>document.getElementById(id);
+ w.localHistoryJobs=()=>[job];
+ w.el=(tag,css,text)=>{const node=document.createElement(tag);node.className=css;if(text)node.textContent=text;return node;};
+ w.button=(text,action)=>{const node=w.el('button','',text);node.onclick=action;return node;};
+ w.api=async(path,body)=>{requests.push([path,body.id]);};
+ w.poll=async()=>{};
+ const render=fs.readFileSync('static/studio.js','utf8').split('\n').find(line=>line.startsWith('function renderVideoHistory'));
+ w.eval(render+'\nconst sceneRecord={id:"scene"};renderVideoHistory();');
+ assert.equal(document.querySelector('.error').textContent,job.message);
+ const resume=[...document.querySelectorAll('button')].find(node=>node.textContent==='Resume polling');
+ resume.click();
+ assert.deepEqual(requests,[['/api/resume','saved-video']]);
+ historyDOM.window.close();
+}

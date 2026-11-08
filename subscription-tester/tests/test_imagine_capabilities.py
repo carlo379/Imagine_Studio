@@ -134,6 +134,78 @@ class ImageCapabilityTests(unittest.TestCase):
         client.post.assert_not_called();download.assert_called_once();self.assertEqual(job['outputs'][0]['id'],output['id'])
         self.assertEqual(job['status'],'done');self.assertEqual(job['model_identity'],'unconfirmed');self.assertIsNone(job['returned_model'])
 
+    def test_poll_errors_are_visible_and_resume_the_same_request(self):
+        draft = self.draft()
+        job = self.queued(draft)
+        client = Mock()
+        client.post.return_value = httpx.Response(202, json={'request_id': 'saved-image'})
+        client.get.return_value = httpx.Response(400, json={'error': {
+            'message': 'Invalid image request ID. Credential mock-auth. https://private.invalid/result',
+        }})
+        self.run_worker(job, client, self.images.compile(draft)[1])
+        path = '/agent/v1/image-studio/jobs/'+job['id']
+        _, record = self.app.agent.dispatch('GET', path, {})
+        self.assertEqual(record['http_status'], 400)
+        self.assertIn('HTTP 400', record['message'])
+        self.assertIn('Invalid image request ID', record['message'])
+        self.assertNotIn('mock-auth', json.dumps(record))
+        self.assertNotIn('private.invalid', json.dumps(record))
+        self.assertTrue(record['recoverable'])
+        self.assertEqual(self.app.snapshot()['message'], record['message'])
+        self.assertEqual(json.loads(self.images.path.read_text())['jobs'][0]['request_id'], 'saved-image')
+        client.post.assert_called_once()
+
+        for response in (httpx.Response(400), httpx.Response(400, content=b'\xff')):
+            with self.subTest(body=response.content):
+                with patch.object(self.app, 'spawn') as spawn:
+                    self.app.agent.dispatch('POST', path+'/resume', {})
+                self.assertIsNone(spawn.call_args.args[-1])
+                client.reset_mock()
+                client.get.return_value = response
+                self.run_worker(job, client)
+                _, record = self.app.agent.dispatch('GET', path, {})
+                self.assertIn('HTTP 400', record['message'])
+                self.assertIn('no usable error details', record['message'])
+                self.assertEqual(record['upstream_error'], '')
+                self.assertTrue(record['recoverable'])
+                self.assertEqual(record['request_id'], 'saved-image')
+                client.post.assert_not_called()
+                client.get.assert_called_once()
+                self.assertTrue(client.get.call_args.args[0].endswith('/saved-image'))
+
+    def test_submission_failure_envelope_keeps_the_image_request_id(self):
+        draft = self.draft()
+        job = self.queued(draft)
+        client = Mock()
+        client.post.return_value = httpx.Response(202, json={'request_id': 'acknowledged-image',
+            'error': {'message': 'Unable to accept settings yet.'}})
+        self.run_worker(job, client, self.images.compile(draft)[1])
+        self.assertEqual(job['request_id'], 'acknowledged-image')
+        self.assertTrue(job['recoverable'])
+        self.assertIn('Unable to accept settings yet.', job['message'])
+        self.assertEqual(job['http_status'], 202)
+        client.post.assert_called_once()
+        client.get.assert_not_called()
+
+    def test_image_terminal_and_unexpected_responses_preserve_details(self):
+        draft = self.draft()
+        job = self.queued(draft)
+        job.update(request_id='terminal-image', recoverable=True)
+        client = Mock()
+        for status, payload, reason, recoverable in (
+            (200, {'status': 'failed', 'error': 'Invalid image edit.'}, 'Invalid image edit.', False),
+            (404, {'message': 'Request aged out.'}, 'Request aged out.', False),
+            (202, {'error': {'reason': 'Status temporarily unavailable.'}}, 'Status temporarily unavailable.', True),
+        ):
+            with self.subTest(payload=payload):
+                job['recoverable'] = True
+                client.get.return_value = httpx.Response(status, json=payload)
+                self.run_worker(job, client)
+                self.assertIn(reason, job['message'])
+                self.assertEqual(job['recoverable'], recoverable)
+                self.assertEqual(job['request_id'], 'terminal-image')
+        client.post.assert_not_called()
+
     def test_network_failure_with_id_allows_resume_but_no_id_does_not(self):
         draft=self.draft();job=self.queued(draft);client=Mock()
         client.post.return_value=httpx.Response(200,json={'request_id':'durable-id'});client.get.side_effect=httpx.ReadError('interrupted')

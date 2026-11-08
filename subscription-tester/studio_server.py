@@ -17,6 +17,7 @@ from http.server import ThreadingHTTPServer
 
 from server import Tester, Handler, ROOT
 from agent_api import AgentAPI, APIError
+from provider_response import ProviderResponseError, authorization_secrets, has_reported_failure, polling_status, response_object, upstream_error
 from image_studio import ImageStudio
 from named_references import normalize as normalize_reference
 from video_rules import MODELS, RATIOS, VOICES, validate_video, image_input, MODEL_CAPABILITIES
@@ -33,33 +34,6 @@ def save_json(path, data):
     temp.write_text(json.dumps(data))
     temp.chmod(0o600)
     temp.replace(path)
-
-
-def upstream_error(response, secrets=()):
-    """Keep useful JSON error text locally without response headers or credentials."""
-    try:
-        payload = response.json()
-    except Exception:
-        return ''
-    if not isinstance(payload, dict):
-        return ''
-    error = payload.get('error', payload)
-    if isinstance(error, dict):
-        detail = error.get('message') or error.get('detail') or error.get('code')
-    else:
-        detail = error
-    if not isinstance(detail, str):
-        detail = payload.get('message') or payload.get('detail')
-    if not isinstance(detail, str):
-        return ''
-    for secret in secrets:
-        if secret:
-            detail = detail.replace(secret, '[redacted]')
-    detail = re.sub(r'(?i)Bearer\s+\S+|(?:xai-|sk-)[A-Za-z0-9_-]+', '[redacted]', detail)
-    detail = re.sub(r'eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+', '[redacted]', detail)
-    detail = re.sub(r'data:[^\s"\']+', '[image data]', detail)
-    detail = re.sub(r'https?://[^\s"\']+', '[URL]', detail)
-    return ' '.join(detail.split())[:1200]
 
 
 def oauth_headers():
@@ -342,18 +316,24 @@ class Studio(Tester):
             # Preserve the actual outbound prompt and resolved local image bytes,
             # so later review never substitutes the current editor or library.
             job['request_snapshot']=self.video_review.capture_submission(job, body, settings)
-            self.state.update(phase='generating', progress=None, video=None, request_id=None,
+            self.state.update(phase='generating', http_status=None, progress=None, video=None, request_id=None,
                               job_id=job['id'], message='Starting mock generation…' if self.mock else 'Submitting video request…')
             self.history.insert(0, job)
             save_json(self.history_path, self.history)
         self.spawn(self.video_worker,body,job)
         return job['id']
 
-    def finish(self, job, status, message, video=None):
+    def finish(self, job, status, message, video=None, *, provider_error=None):
         with self.lock:
+            if provider_error:
+                job.update(provider_error.fields())
+            else:
+                job.pop('http_status', None)
+                job.pop('upstream_error', None)
             job.update(status=status, video=video, message=message)
             if re.search(r'quota|rate.?limit|usage.?limit|HTTP 429',message,re.I):job['limit_error_at']=time.time()
-            self.state.update(phase=status, message=message, video=video, progress=100 if status == 'done' else None)
+            self.state.update(phase=status, message=message, video=video, http_status=job.get('http_status'),
+                              progress=100 if status == 'done' else None)
             save_json(self.history_path, self.history)
 
     def video_worker(self, body, job):
@@ -381,66 +361,70 @@ class Studio(Tester):
                     from provider_usage import observe
                     observe(self,response,'grok_video')
                     if response.status_code not in (200, 202):
-                        self.update(http_status=response.status_code)
-                        detail = upstream_error(response, (headers['Authorization'], headers['Authorization'].removeprefix('Bearer ')))
+                        error = ProviderResponseError('xAI rejected the video request', response, authorization_secrets(headers))
                         if response.status_code==401:
                             self.update(signed_in=False,auth_status='error',auth_error='Grok sign-in expired. Reconnect before generating again.')
-                        with self.lock:
-                            job['http_status'] = response.status_code
-                            job['upstream_error'] = detail
-                            if response.status_code==403 and 'reference_audios' in detail and 'not enabled' in detail:
+                        if response.status_code==403 and 'reference_audios' in error.reason and 'not enabled' in error.reason:
+                            with self.lock:
                                 job['audio_reference_access']='denied'
-                        access_hint=' Ask xAI to enable caller-supplied audio-reference URLs for this team before retrying.' if job.get('audio_reference_access')=='denied' else ''
-                        self.finish(job, 'error', f'xAI rejected the request (HTTP {response.status_code}).' + (f' {detail}' if detail else ' No detailed JSON error was returned.') + access_hint + ' No automatic retry was made.')
-                        return
-                    identity = response.json().get('request_id', '')
+                        raise error
+                    payload = response_object(response)
+                    identity = payload.get('request_id') if payload else None
                     if not isinstance(identity, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,160}', identity):
-                        raise ValueError('Invalid request identifier.')
+                        raise ProviderResponseError('xAI did not return a usable video request ID', response,
+                            authorization_secrets(headers), hint='Check usage before starting another generation.')
                     with self.lock:
                         job['request_id'] = identity
                         save_json(self.history_path, self.history)
+                    if has_reported_failure(payload):
+                        raise ProviderResponseError('xAI reported a video submission failure', response,
+                            authorization_secrets(headers), hint='The request ID was saved. Resume polling to check its status.')
                 else:
                     identity = job['request_id']
                 self.update(phase='pending', request_id=identity, message='Rendering video. Polling xAI…')
                 deadline = time.monotonic() + CONFIG['poll_timeout_seconds']
                 while time.monotonic() < deadline:
-                    result = client.get(f'https://api.x.ai/v1/videos/{identity}', headers=oauth_headers())
+                    headers = oauth_headers()
+                    secrets = authorization_secrets(headers)
+                    result = client.get(f'https://api.x.ai/v1/videos/{identity}', headers=headers)
                     from provider_usage import observe
                     observe(self,result,'grok_video')
+                    recovery = 'Resume polling the saved request. Do not submit a duplicate.'
                     if result.status_code not in (200, 202):
-                        self.finish(job, 'error', f'Polling stopped (HTTP {result.status_code}). The job may still be running; use Resume polling. Do not submit a duplicate.')
-                        return
-                    payload = result.json() if result.content else {}
-                    status = payload.get('status') or ('pending' if result.status_code == 202 else None)
+                        raise ProviderResponseError('Video polling stopped', result, secrets, hint=recovery)
+                    payload = response_object(result) if result.content else {}
+                    status = polling_status(result, payload)
                     if status == 'done':
-                        video = payload.get('video', {})
+                        video = payload.get('video')
+                        if not isinstance(video, dict):
+                            raise ProviderResponseError('xAI returned no usable video output', result, secrets, hint=recovery)
                         url = video.get('url', '')
                         if video.get('respect_moderation') is False:
-                            self.finish(job, 'error', 'The output was filtered by moderation.')
-                            return
-                        if urlparse(url).scheme != 'https':
-                            raise ValueError('Invalid video output URL.')
+                            raise ProviderResponseError('The video output was filtered by moderation', result, secrets)
+                        if not isinstance(url, str) or urlparse(url).scheme != 'https':
+                            raise ProviderResponseError('xAI returned no usable video output URL', result, secrets, hint=recovery)
                         with self.lock:
                             job['output_duration'] = video.get('duration')
                             job['requested_model'] = job.get('requested_model') or job.get('settings',{}).get('model')
                             job['returned_model'] = payload.get('model') if isinstance(payload.get('model'),str) else None
                             job['model_identity'] = 'confirmed' if job['returned_model'] else 'unconfirmed'
-                            job['usage'] = {key: value for key, value in payload.get('usage', {}).items() if type(value) in (int, float, bool)}
+                            usage = payload.get('usage')
+                            job['usage'] = {key: value for key, value in usage.items() if type(value) in (int, float, bool)} if isinstance(usage, dict) else {}
                         self.finish(job, 'done', 'Video ready. Remaining Grok allowance cannot be read by Studio. Check Grok Settings → Usage for the balance and deduction.', url)
                         return
                     if status in ('failed', 'expired'):
-                        code = payload.get('error', {}).get('code', '')
-                        messages = {'invalid_argument': 'xAI rejected an input or moderation check.', 'permission_denied': 'Your account lacks video access.',
-                                    'failed_precondition': 'The model does not support these settings.', 'service_unavailable': 'xAI is temporarily overloaded.',
-                                    'internal_error': 'xAI could not complete the render.'}
-                        self.finish(job, 'error', 'Request expired.' if status == 'expired' else messages.get(code, 'Video generation failed.'))
-                        return
+                        action = 'xAI video request expired' if status == 'expired' else 'xAI video generation failed'
+                        raise ProviderResponseError(action, result, secrets)
                     if status != 'pending':
-                        raise ValueError('Unknown polling status.')
+                        raise ProviderResponseError('xAI returned an unreadable or unexpected video polling response',
+                            result, secrets, hint=recovery)
                     percentage = payload.get('progress')
                     self.update(progress=percentage if type(percentage) in (int, float) and 0 <= percentage <= 100 else None)
                     time.sleep(CONFIG['poll_interval_seconds'])
                 self.finish(job, 'error', 'Local polling timed out. The request may still finish. Resume polling instead of creating another generation.')
+        except ProviderResponseError as error:
+            hint = ' Ask xAI to enable caller-supplied audio-reference URLs for this team before retrying.' if job.get('audio_reference_access')=='denied' else ''
+            self.finish(job, 'error', str(error) + hint + ' No automatic retry was made.', provider_error=error)
         except Exception:
             self.finish(job, 'error', 'Network, token refresh, or response validation failed. If a request ID exists, resume polling instead of submitting again.')
 
@@ -452,7 +436,7 @@ class Studio(Tester):
             if not job or job['mock'] or not job.get('request_id') or job['status'] == 'done':
                 raise ValueError('Choose an unfinished live request with a saved request ID.')
             self.job = job
-            self.state.update(phase='pending', job_id=identity, request_id=job['request_id'], video=None,
+            self.state.update(phase='pending', http_status=None, job_id=identity, request_id=job['request_id'], video=None,
                               progress=None, message='Resuming the saved request. No new generation is submitted.')
         self.spawn(self.video_worker,None,job)
 

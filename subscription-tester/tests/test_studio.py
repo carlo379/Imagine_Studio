@@ -130,6 +130,54 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn('example.invalid',job['message'])
         self.assertEqual(studio.upstream_error(httpx.Response(400,text='<html>proxy error</html>')), '')
 
+    def test_submission_failure_envelope_keeps_the_video_request_id(self):
+        import httpx
+        self.app.mock = False
+        job = {'id': 'submitted-video', 'mock': False, 'status': 'pending', 'request_id': None}
+        self.app.history = [job]
+        client = MagicMock()
+        client.post.return_value = httpx.Response(200, json={'request_id': 'acknowledged-video',
+            'status': 'failed', 'error': {'message': 'The render could not be queued.'}})
+        with patch.object(studio, 'oauth_headers', return_value={'Authorization': 'Bearer fixture-token'}), patch('httpx.Client') as factory:
+            factory.return_value.__enter__.return_value = client
+            self.app.video_worker(request(), job)
+        self.assertEqual(job['request_id'], 'acknowledged-video')
+        self.assertEqual(job['http_status'], 200)
+        self.assertIn('The render could not be queued.', job['message'])
+        client.post.assert_called_once()
+        client.get.assert_not_called()
+
+    def test_video_resume_exposes_http_and_terminal_poll_errors(self):
+        import httpx
+        self.app.mock = False
+        job = {'id': 'saved-video', 'mock': False, 'status': 'error', 'request_id': 'video-id'}
+        self.app.history = [job]
+        path = '/agent/v1/jobs/'+job['id']
+        for response, reason in (
+            (httpx.Response(400, json={'error': {'detail': 'Invalid video request. Bearer fixture-token'}}), 'Invalid video request.'),
+            (httpx.Response(503, text='Service temporarily overloaded.'), 'Service temporarily overloaded.'),
+            (httpx.Response(200, json={'status': 'failed', 'error': {'message': 'Render exceeded the model limit.'}}), 'Render exceeded the model limit.'),
+            (httpx.Response(400, text='<html>proxy</html>'), 'no usable error details'),
+            (httpx.Response(202, content=b'bad response'), 'no usable error details'),
+        ):
+            with self.subTest(status=response.status_code, reason=reason):
+                client = MagicMock()
+                client.get.return_value = response
+                with patch.object(self.app, 'spawn') as spawn:
+                    self.app.agent.dispatch('POST', path+'/resume', {})
+                self.assertIsNone(spawn.call_args.args[1])
+                with patch.object(studio, 'oauth_headers', return_value={'Authorization': 'Bearer fixture-token'}), patch('httpx.Client') as factory:
+                    factory.return_value.__enter__.return_value = client
+                    self.app.video_worker(None, job)
+                _, record = self.app.agent.dispatch('GET', path, {})
+                self.assertIn(reason, record['message'])
+                self.assertIn(f'HTTP {response.status_code}', record['message'])
+                self.assertEqual(self.app.snapshot()['message'], record['message'])
+                self.assertNotIn('fixture-token', str(record))
+                self.assertEqual(record['request_id'], 'video-id')
+                client.post.assert_not_called()
+                client.get.assert_called_once()
+
     def test_recorded_audio_denial_closes_relay_and_never_retries(self):
         import httpx
         self.app.mock=False
