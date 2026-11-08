@@ -50,15 +50,15 @@ also checked. Mock fixtures exercise paid-step validation without real generatio
 - [subscription-tester/image_studio.py](../subscription-tester/image_studio.py)
 - [subscription-tester/media_prompting.py](../subscription-tester/media_prompting.py)
 - [subscription-tester/series_builder.py](../subscription-tester/series_builder.py)
-- [subscription-tester/static/build/chunks/chunk-H4VIRMYH.js](../subscription-tester/static/build/chunks/chunk-H4VIRMYH.js)
+- `subscription-tester/static/build/chunks/chunk-H4VIRMYH.js` — retired frontend bundle, replaced by the rebuilt manifest/chunks.
 - `subscription-tester/static/build/chunks/chunk-YKYAQQEV.js` — retired frontend bundle, replaced by the rebuilt manifest/chunks.
 - `subscription-tester/static/build/chunks/filmmaking-AIHVQASV.js` — retired frontend bundle, replaced by the rebuilt manifest/chunks.
-- [subscription-tester/static/build/chunks/filmmaking-LGBY75F4.js](../subscription-tester/static/build/chunks/filmmaking-LGBY75F4.js)
-- [subscription-tester/static/build/chunks/series-workspace-NNLD7VHF.js](../subscription-tester/static/build/chunks/series-workspace-NNLD7VHF.js)
+- `subscription-tester/static/build/chunks/filmmaking-LGBY75F4.js` — retired frontend bundle, replaced by the rebuilt manifest/chunks.
+- `subscription-tester/static/build/chunks/series-workspace-NNLD7VHF.js` — retired frontend bundle, replaced by the rebuilt manifest/chunks.
 - `subscription-tester/static/build/chunks/series-workspace-TULKRH4X.js` — retired frontend bundle, replaced by the rebuilt manifest/chunks.
 - [subscription-tester/static/build/manifest.json](../subscription-tester/static/build/manifest.json)
 - `subscription-tester/static/build/production-3X6VHOYE.js` — retired frontend bundle, replaced by the rebuilt manifest/chunks.
-- [subscription-tester/static/build/production-ZCL2ZELE.js](../subscription-tester/static/build/production-ZCL2ZELE.js)
+- `subscription-tester/static/build/production-ZCL2ZELE.js` — retired frontend bundle, replaced by the rebuilt manifest/chunks.
 - [subscription-tester/static/production.js](../subscription-tester/static/production.js)
 - [subscription-tester/storybook_links.py](../subscription-tester/storybook_links.py)
 - [subscription-tester/tests/test_dawn_http.py](../subscription-tester/tests/test_dawn_http.py)

@@ -1,5 +1,7 @@
 # Imagine Studio · connected filmmaking tools
 
+[Directing tools](DIRECTING_TOOLS_GUIDE.md) covers Frame Continuity Review, Generation Request Preview and Shared Scene Blocking.
+
 The creation flow is **Develop → Script → Storyboard → Generate → Edit**. Quick Video skips Script. World Builder lives in Develop, Camera Control stages a storyboard shot, and Camera Movements directs a video shot. The existing brief, collaborator, asset library, image/video generators and editor remain available.
 
 ## Agent workflows — October 16, 2026

@@ -309,6 +309,8 @@ def specification():
     parity_schemas.update(handoff_contracts(paths,operation))
     from camera_contracts import contracts as camera_contracts
     parity_schemas.update(camera_contracts(paths,operation))
+    from directing_contracts import contracts as directing_contracts
+    directing_contracts(paths,operation)
     reconnect={'type':'object','additionalProperties':False,'required':['id','status','step','human_action_required','error','requested_at','updated_at'],'properties':{
         'id':{'type':['string','null'],'description':'Opaque request ID; never a credential or verification code.'},
         'status':{'enum':['idle','pending','connected','error']},'step':{'enum':['none','human_start','device_verification','complete','error']},

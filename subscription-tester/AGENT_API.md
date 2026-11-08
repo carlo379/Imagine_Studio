@@ -54,6 +54,10 @@ Browser draft sharing and browser control have separate human-consent rules.
 
 ## Discover capabilities
 
+[Directing tools](DIRECTING_TOOLS_GUIDE.md) covers the shared continuity review, video request preview and scene blocking APIs.
+
+
+
 ```python
 capabilities = client.request("schema")
 contract = client.request("openapi.json")

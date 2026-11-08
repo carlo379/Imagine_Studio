@@ -275,7 +275,7 @@ class FilmmakingStudio:
     def direction(self,shot_id):
         s=self.p.get(shot_id,'shot');self.production(s['production_id'])
         return next((r for r in self.p.all('direction') if r['shot_id']==shot_id),dict(id='direction-'+shot_id,shot_id=shot_id,revision=0,staging=None))
-    def normalize_staging(self,value,validate_assets=True):
+    def normalize_staging(self,value,validate_assets=True,allow_slide=False):
         if not isinstance(value,dict) or set(value)!= {'camera','subjects','ratio','environment','style'}:raise APIError('invalid_staging','Check the shot staging fields.')
         if value['ratio'] not in ('16:9','9:16','1:1'):raise APIError('invalid_staging','Choose a supported composition ratio.')
         def num(v,lo,hi):
@@ -289,7 +289,7 @@ class FilmmakingStudio:
         subjects=[]
         for s in value['subjects']:
             if not isinstance(s,dict) or set(s)!= {'name','asset_id','x','z','rotation','pose','arms','head'}:raise APIError('invalid_staging','Check the subject controls.')
-            if s['pose'] not in ('stand','walk','sit','crouch','reach','fight'):raise APIError('invalid_staging','Choose a supported pose.')
+            if s['pose'] not in ('stand','walk','sit','crouch','reach','fight') and not (allow_slide and s['pose']=='slide'):raise APIError('invalid_staging','Choose a supported pose.')
             if s['asset_id'] and validate_assets:
                 ref=self.app.asset_studio.get(s['asset_id'])
                 if ref.get('archived') or ref['category']!='Character':raise APIError('invalid_staging','Choose an active character asset.')
@@ -348,6 +348,9 @@ class FilmmakingStudio:
         # The movement template is authoring input, never final appended prose.
         return {**copy.deepcopy(v),'camera_brief':prompt}
     def dispatch(self,method,parts,data,key):
+        from scene_blocking import route as blocking_route
+        blocked=blocking_route(self,method,parts,data)
+        if blocked is not None:return blocked
         directed=self.video_directions.dispatch(method,parts,data,key)
         if directed is not None:return directed
         framed=self.opening_frames.dispatch(method,parts,data,key)
