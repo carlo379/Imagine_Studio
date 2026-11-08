@@ -52,6 +52,16 @@ class ResultDownloadTests(unittest.TestCase):
                 with self.assertRaises(ValueError):openai_images.grok_result_bytes('https://imgen.x.ai/a',1024)
                 factory.assert_not_called()
 
+    def test_grok_result_http_failure_exposes_sanitized_reason(self):
+        factory = download_client(status=403, raw=b'{"message":"Result URL expired. https://private.invalid/signed"}',
+                                  mime='application/json')
+        with patch.object(openai_images.socket, 'getaddrinfo', return_value=addresses('8.8.8.8')), patch('httpx.Client', factory):
+            with self.assertRaises(ValueError) as failure:
+                openai_images.grok_result_bytes('https://imgen.x.ai/result.png', 1024)
+        self.assertIn('HTTP 403', str(failure.exception))
+        self.assertIn('Result URL expired.', str(failure.exception))
+        self.assertNotIn('private.invalid', str(failure.exception))
+
     def test_redirects_oversize_and_invalid_content_still_fail(self):
         for factory,limit in ((download_client(status=302),1024),(download_client(),1),(download_client(raw=b'not png'),1024),(download_client(mime='text/html'),1024)):
             with patch.object(openai_images.socket,'getaddrinfo',return_value=addresses('198.18.0.1')),patch('httpx.Client',factory):

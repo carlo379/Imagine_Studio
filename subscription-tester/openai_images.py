@@ -14,6 +14,8 @@ import threading
 import time
 from urllib.parse import urlparse
 
+from provider_response import ProviderResponseError, response_object
+
 ROOT = Path(__file__).resolve().parent
 API_MODELS = ('gpt-image-2.5-flare', 'gpt-image-2.5-sunburst')
 QUALITIES = ('low', 'medium', 'high', 'xhigh', 'max', 'auto')
@@ -245,6 +247,21 @@ def _image_bytes(source,limit,*,grok_result=False):
         with httpx.Client(timeout=30, follow_redirects=False, trust_env=False) as client:
             with client.stream('GET', source) as response:
                 if response.status_code != 200:
+                    if grok_result:
+                        # Bound diagnostics from a streamed response without downloading an error page.
+                        raw_error = bytearray()
+                        try:
+                            for chunk in response.iter_bytes(chunk_size=4096):
+                                raw_error.extend(chunk)
+                                if len(raw_error) > 4096:
+                                    raw_error.clear()
+                                    break
+                        except httpx.HTTPError:
+                            raw_error.clear()
+                        error_response = httpx.Response(response.status_code, content=bytes(raw_error),
+                            headers={'content-type': response.headers.get('content-type', '')})
+                        raise ProviderResponseError('Grok image result download failed', error_response,
+                            hint='Resume the saved request to recover its output.')
                     raise ValueError('Reference URL could not be downloaded. Upload the image instead.')
                 mime = response.headers.get('content-type', '').split(';')[0]
                 for chunk in response.iter_bytes():
@@ -276,7 +293,6 @@ def decode_output(value, limit):
 
 def generate_api(endpoint, body, config):
     import httpx
-    from studio_server import upstream_error
     key = api_key()
     if not key:
         raise ValueError('Configure OPENAI_API_KEY on the server for Image 2.5 API billing.')
@@ -299,11 +315,12 @@ def generate_api(endpoint, body, config):
         else:
             response = client.post(endpoint, headers=headers, json=fields)
         if response.status_code != 200:
-            raise ValueError(f'OpenAI rejected the image request (HTTP {response.status_code}). ' + upstream_error(response, (key, 'Bearer ' + key)))
-        payload = response.json()
-        data = payload.get('data')
-        if not isinstance(data, list) or len(data) != fields.get('n',1):
-            raise ValueError('Unexpected OpenAI output count. Check usage before trying again.')
+            raise ProviderResponseError('OpenAI rejected the image request', response, (key, 'Bearer ' + key))
+        payload = response_object(response)
+        data = payload.get('data') if payload else None
+        if not isinstance(data, list) or len(data) != fields.get('n',1) or any(not isinstance(item, dict) for item in data):
+            raise ProviderResponseError('OpenAI returned an unreadable or unexpected image response', response,
+                (key, 'Bearer ' + key), hint='Check usage before trying again.')
         candidates = [decode_output(item.get('b64_json'), config.get('image_output_limit_mb',20)*1024*1024) for item in data]
         raw = candidates[0] if len(candidates)==1 else candidates
         return raw, {'request_id': response.headers.get('x-request-id'),

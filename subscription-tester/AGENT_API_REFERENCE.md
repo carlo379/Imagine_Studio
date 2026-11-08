@@ -236,6 +236,13 @@ Video generation requires an 8–100 character `Idempotency-Key` made of ASCII l
 
 If an error is repairable and the human authorizes another attempt, edit the scene and use a new key for that new request. A saved request ID should be resumed with `jobs/{id}/resume` rather than generated again. This endpoint resumes polling only, including after a server restart. No automatic generation retries exist.
 
+When an image or video job fails with a provider response, the job’s
+`message` includes the provider HTTP status and sanitized reason, or states
+that the response contained no usable error details. Job records also expose
+`http_status` and `upstream_error` for that failure. A terminal failure can
+arrive in a successful HTTP response. Follow the job status and recovery
+guidance rather than treating its provider HTTP status as the job outcome.
+
 New live requests through the original diagnostic are blocked in Imagine Studio; use guide-backed preparation and generation in Image Studio. Local mock diagnostics and existing request replays require explicit approval and an 8–100 character `Idempotency-Key` (letters, digits, underscore or hyphen), including the browser `/tester` page. Identical retries return the original request ID and stored result; changed settings with the same key return 409. Poll `GET image-test/{id}`. Interrupted requests become errors on restart and are never automatically submitted again. Studio stores these records locally; the standalone diagnostic harness deduplicates within its process only. The agent prompt limit is the configured limit (currently 4,096); the tester page remains limited to 1,000 characters. This API cannot cancel a provider render, guarantee usage-pool selection, upload a custom video voice, sync the Grok.com reference library or bypass external sign-in/consent.
 
 ### Command-line interface

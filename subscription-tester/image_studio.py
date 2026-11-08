@@ -10,6 +10,7 @@ import time
 import uuid
 import zlib
 from agent_api import APIError
+from provider_response import ProviderResponseError, authorization_secrets, has_reported_failure, polling_status, response_object
 from video_rules import RATIOS
 import openai_images
 
@@ -366,6 +367,8 @@ class ImageStudio:
             raise APIError('not_resumable','This image job has no recoverable provider request.',409)
         with self.app.lock:
             if self.app.state['phase'] in ('connecting','waiting','generating','pending'):raise APIError('busy','Wait for the current operation.',409)
+            job.pop('http_status', None)
+            job.pop('upstream_error', None)
             job.update(status='pending',message='Resuming the existing image request. No new generation submitted.')
             self.persist();self.app.state.update(phase='pending',message=job['message'])
         self.app.spawn(self.worker,job,job['endpoint'],None)
@@ -395,20 +398,29 @@ class ImageStudio:
         from studio_server import oauth_headers
         deadline=time.monotonic()+self.config.get('poll_timeout_seconds',600)
         while time.monotonic()<deadline:
-            result=client.get('https://api.x.ai/v1/images/'+job['request_id'],headers=oauth_headers())
+            headers = oauth_headers()
+            secrets = authorization_secrets(headers)
+            result = client.get('https://api.x.ai/v1/images/'+job['request_id'], headers=headers)
             from provider_usage import observe
             observe(self.app,result,'grok_image')
-            if result.status_code==404:
-                job['recoverable']=False;self.persist()
-                raise ValueError('The saved Grok image request is no longer available. Deferred results expire after 24 hours.')
-            if result.status_code not in (200,202):raise ValueError(f'Image polling stopped (HTTP {result.status_code}). Resume the saved request; do not resubmit.')
-            payload=result.json() if result.content else {}
-            status=payload.get('status') or ('pending' if result.status_code==202 else None)
-            if status=='done':return payload
+            recovery = 'Resume the saved request. Do not submit a duplicate.'
+            if result.status_code == 404:
+                job['recoverable'] = False
+                raise ProviderResponseError('The saved Grok image request is no longer available', result, secrets,
+                    hint='Deferred results expire after 24 hours.')
+            if result.status_code not in (200,202):
+                raise ProviderResponseError('Image polling stopped', result, secrets, hint=recovery)
+            payload = response_object(result) if result.content else {}
+            status = polling_status(result, payload)
+            if status == 'done' and payload.get('data'):
+                return payload
             if status in ('failed','expired'):
-                job['recoverable']=False;self.persist()
-                raise ValueError('Grok image request expired.' if status=='expired' else 'Grok image generation failed: '+openai_images.safe_error((payload.get('error') or {}).get('message','Unknown provider failure.')))
-            if status!='pending':raise ValueError('Unknown image polling status. Resume the saved request.')
+                job['recoverable'] = False
+                action = 'Grok image request expired' if status == 'expired' else 'Grok image generation failed'
+                raise ProviderResponseError(action, result, secrets)
+            if status != 'pending':
+                raise ProviderResponseError('xAI returned an unreadable or unexpected image polling response',
+                    result, secrets, hint=recovery)
             time.sleep(self.config.get('poll_interval_seconds',5))
         raise ValueError('Image polling timed out. Resume the existing request; no automatic resubmission.')
 
@@ -445,7 +457,7 @@ class ImageStudio:
                 with self.lock:job.update(metadata)
             else:
                 import httpx
-                from studio_server import oauth_headers,upstream_error
+                from studio_server import oauth_headers
                 from grok_debug_trace import begin,post,utc
                 with httpx.Client(timeout=self.config.get('image_timeout_seconds',180),follow_redirects=False) as client:
                     if body is not None:
@@ -455,26 +467,34 @@ class ImageStudio:
                         from provider_usage import observe
                         observe(self.app,response,'grok_image')
                         if response.status_code not in (200,202):
-                            detail=upstream_error(response,(headers['Authorization'],headers['Authorization'][7:]))
-                            with self.lock: job.update(http_status=response.status_code)
+                            secrets = authorization_secrets(headers)
+                            error = ProviderResponseError('xAI rejected the image request', response, secrets)
                             if response.status_code==401:
                                 with self.lock:job.update(error_kind='authentication_expired')
                                 self.app.update(signed_in=False,auth_status='error',auth_error='Grok sign-in expired. Reconnect before generating again.')
-                                raise ValueError('Grok reported an expired authentication context '
-                                    f'(HTTP {response.status_code}). Reconnect Grok in Workspace & account before trying again. '
-                                    'This is not an outfit or content rejection.')
-                            if 'auth context expired' in detail.lower():
+                                raise ProviderResponseError('Grok reported an expired authentication context', response, secrets,
+                                    hint='Reconnect Grok in Workspace & account before trying again.')
+                            if 'auth context expired' in error.reason.lower():
                                 with self.lock:job.update(error_kind='upstream_auth_context')
-                                raise ValueError(f'Grok image service failed (HTTP {response.status_code}): '+detail+
-                                    ' This does not establish that your sign-in expired. Your connection was kept.')
-                            raise ValueError(f'xAI rejected the image request (HTTP {response.status_code}). '+detail)
-                        payload=response.json()
-                        identity=payload.get('request_id')
+                                raise ProviderResponseError('Grok image service failed', response, secrets,
+                                    hint='This does not establish that your sign-in expired. Your connection was kept.')
+                            raise error
+                        payload = response_object(response)
+                        identity = payload.get('request_id') if payload else None
                         if identity is not None:
-                            if not isinstance(identity,str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,160}',identity):raise ValueError('Invalid image request identifier.')
-                            with self.lock:job.update(request_id=identity,recoverable=True);self.persist()
+                            if not isinstance(identity,str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,160}',identity):
+                                raise ProviderResponseError('xAI did not return a usable image request ID', response, authorization_secrets(headers))
+                            terminal = payload.get('status') in ('failed', 'expired')
+                            with self.lock:
+                                job.update(request_id=identity, recoverable=not terminal)
+                                self.persist()
+                            if has_reported_failure(payload):
+                                hint = 'Resume the saved request to check its status.' if not terminal else ''
+                                raise ProviderResponseError('xAI reported an image submission failure', response,
+                                    authorization_secrets(headers), hint=hint)
                             payload=self.poll_grok(client,job)
-                        elif not payload.get('data'):raise ValueError('No image request ID returned. Check usage before generating again.')
+                        elif has_reported_failure(payload) or not payload or not payload.get('data'):
+                            raise ProviderResponseError('xAI did not return a usable image or request ID', response, authorization_secrets(headers))
                     else:payload=self.poll_grok(client,job)
                     outputs=self.cache_grok(payload,job)
             # Publish completion and release the workspace generation gate together.
@@ -483,9 +503,14 @@ class ImageStudio:
                 job.update(status='done',recoverable=False,outputs=outputs,message='Mock candidates ready. No account usage consumed.' if self.app.mock else 'Candidates saved locally. Review each before approving.');self.persist()
                 self.app.state.update(phase=job['status'],message=job['message'])
         except Exception as e:
-            message=openai_images.safe_error(e) if isinstance(e,ValueError) else 'Network, account authentication or response validation failed.'
+            if isinstance(e, ProviderResponseError):
+                message = str(e)
+            else:
+                message = openai_images.safe_error(e) if isinstance(e, ValueError) else 'Network, account authentication or response validation failed.'
             if job.get('provider')=='grok' and not job.get('request_id') and not self.app.mock:message+=' No request ID was saved; check usage before starting another generation.'
             with self.lock,self.app.lock:
+                if isinstance(e, ProviderResponseError):
+                    job.update(e.fields())
                 job.update(status='error',message=message+' No automatic retry was made.')
                 if re.search(r'quota|rate.?limit|usage.?limit|429',message,re.I):job['limit_error_at']=time.time()
                 self.app.state.update(phase=job['status'],message=job['message'])
