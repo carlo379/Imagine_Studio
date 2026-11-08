@@ -1,6 +1,7 @@
 """Release 1 production relationships. Legacy media stays intact; no provider calls here."""
 import copy
 import json
+import math
 import shutil
 import sqlite3
 import time
@@ -239,7 +240,7 @@ class ProductionStudio:
             shot['video_ready']=any(j['status']=='done' for j in vjs)
             ep=episode_map.get(shot['episode_id'])
             shot['orphaned']=bool(ep and not any(s['id']==shot['story_scene_id'] for s in ep['scenes']))
-            shot['script_changed']=bool(ep and any(r and r.get('story_context',{}).get('script_revision')!=ep['revision'] for r in (v,im)))
+            shot['script_changed']=bool(ep and any(r and (r.get('story_context') or {}).get('script_revision')!=ep['revision'] for r in (v,im)))
             shot['status']='Script changed' if shot['script_changed'] else 'Video ready' if shot['video_ready'] else 'Image ready' if shot['image_ready'] else 'To storyboard'
             shot['notes']='';shot['_summary']=True
         order={(e['id'],s['id']):(ei,si) for ei,e in enumerate(episodes) for si,s in enumerate(e['scenes'])}
@@ -390,7 +391,7 @@ class ProductionStudio:
         if shot.get('episode_id'):
             ep = self.app.stories.record('episodes', shot['episode_id'])
             result['orphaned'] = not any(s['id'] == shot['story_scene_id'] for s in ep['scenes'])
-            result['script_changed'] = any(r and r.get('story_context', {}).get('script_revision') != ep['revision'] for r in (video, image))
+            result['script_changed'] = any(r and (r.get('story_context') or {}).get('script_revision') != ep['revision'] for r in (video, image))
         result['story_direction'] = shot.get('story_direction', shot.get('storyboard_video_prompt', ''))
         if not result['story_direction']:
             for job in reversed(self.all('world-job')):
@@ -475,6 +476,11 @@ class ProductionStudio:
         return value
 
     def dispatch(self, method, parts, data, key=None):
+        if parts and parts[0] == 'continuity' and len(parts) >= 3:
+            from directing_tools import review_route
+            result = review_route(self, method, parts, data)
+            if result is not None:
+                return result
         if len(parts)==2 and parts[1]=='summary' and method=='GET':return 200,self.summary(parts[0])
         if parts == ['recent'] and method == 'POST':return 200,self.recent(data)
         if parts == ['locate'] and method == 'POST':
@@ -513,6 +519,9 @@ class ProductionStudio:
                     return 201, self.outline(p['id'])
         if parts and parts[0] == 'shots' and len(parts)>=2:
             s = self.get(parts[1], 'shot')
+            if parts[2:] == ['generation-preview'] and method == 'GET':
+                from directing_tools import generation_preview
+                return 200, generation_preview(self, s['id'])
             if len(parts)==2 and method=='GET': return 200,self.view_shot(s)
             if len(parts)==2 and method=='PUT':
                 self.check(s,data)
@@ -523,6 +532,11 @@ class ProductionStudio:
                     s.update(title=text(data.get('title',s['title']),120,'Shot title',True),notes=text(data.get('notes',s['notes']),10000,'Shot notes'),revision=s['revision']+1,activity_at=time.time())
                     if direction is not None and direction!=s.get('story_direction',s.get('storyboard_video_prompt')):
                         s.update(story_direction=direction,storyboard_video_prompt=direction,story_direction_updated_at=time.time())
+                    if 'intended_edit_duration' in data:
+                        duration = data['intended_edit_duration']
+                        if duration is not None and (type(duration) not in (int, float) or not 0 < duration <= 3600 or not math.isfinite(duration)):
+                            raise APIError('invalid_duration', 'Enter an edit duration above zero and at most 3600 seconds, or clear it.')
+                        s['intended_edit_duration'] = duration
                     if 'shot_type' in data and (not isinstance(data['shot_type'],str) or len(data['shot_type'])>120):raise APIError('invalid_input','Shot type must be text up to 120 characters.')
                     if 'video_mode' in data and data['video_mode'] not in ('text_to_video','image_to_video'):raise APIError('invalid_input','Choose text_to_video or image_to_video.')
                     if data.get('start_frame_asset_id'):self.app.asset(data['start_frame_asset_id'])

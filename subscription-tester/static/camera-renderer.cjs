@@ -285,13 +285,34 @@ function body(s) {
   const reach = s.pose === "reach", fight = s.pose === "fight", walk = s.pose === "walk";
   const lift = Math.sin(rad(s.arms)) * 0.42, spread = Math.cos(rad(s.arms)) * 0.25;
   const joints = [[0, head, 0], [0, shoulder, 0], [0, hip, 0], [-0.23, shoulder, 0], [0.23, shoulder, 0], [-0.23 - spread, shoulder + (reach ? 0.22 : fight ? -0.15 : -0.28) + lift, reach ? 0.35 : fight ? 0.25 : 0], [0.23 + spread, shoulder + (reach ? 0.22 : fight ? -0.15 : -0.28) + lift, reach ? 0.35 : fight ? 0.25 : 0], [-0.28 - spread, shoulder + (reach ? 0.5 : fight ? 0.08 : -0.55) + lift * 2, reach ? 0.55 : fight ? 0.6 : 0], [0.28 + spread, shoulder + (reach ? 0.5 : fight ? 0.08 : -0.55) + lift * 2, reach ? 0.55 : fight ? 0.6 : 0], [-0.16, hip, 0], [0.16, hip, 0], [-0.18, sit ? 0.65 : crouch ? 0.28 : 0.5, sit ? 0.55 : crouch ? 0.25 : walk ? 0.35 : 0], [0.18, sit ? 0.65 : crouch ? 0.28 : 0.5, sit ? 0.55 : crouch ? 0.25 : walk ? -0.3 : 0], [-0.22, 0.08, sit ? 0.55 : crouch ? -0.1 : walk ? 0.5 : 0.05], [0.22, 0.08, sit ? 0.55 : crouch ? -0.1 : walk ? -0.45 : 0.05]];
+  if (s.pose === "slide") {
+    joints.splice(
+      0,
+      joints.length,
+      [0, 0.66, -0.68],
+      [0, 0.48, -0.42],
+      [0, 0.22, 0],
+      [-0.22, 0.47, -0.4],
+      [0.22, 0.47, -0.4],
+      [-0.38, 0.32, -0.22],
+      [0.38, 0.35, -0.35],
+      [-0.5, 0.15, -0.05],
+      [0.48, 0.42, -0.03],
+      [-0.16, 0.22, 0],
+      [0.16, 0.22, 0],
+      [-0.16, 0.16, 0.52],
+      [0.18, 0.32, 0.43],
+      [-0.17, 0.08, 0.95],
+      [0.25, 0.08, 0.72]
+    );
+  }
   const rotation = rad(s.rotation);
   return joints.map(([x, y, z]) => [s.x + x * Math.cos(rotation) + z * Math.sin(rotation), y, s.z - x * Math.sin(rotation) + z * Math.cos(rotation)]);
 }
 function drawStage(canvas, stage, guide = true) {
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
-  const w = canvas.width, h = canvas.height, project = projector(stage.camera, w, h);
+  const context = canvas.getContext("2d");
+  if (!context) return;
+  const ctx = context, w = canvas.width, h = canvas.height, project = projector(stage.camera, w, h);
   ctx.clearRect(0, 0, w, h);
   const bg = ctx.createLinearGradient(0, 0, 0, h);
   bg.addColorStop(0, "#192d2b");
@@ -314,8 +335,37 @@ function drawStage(canvas, stage, guide = true) {
     line([-8, 0, i], [8, 0, i], "#31514a");
   }
   const colors = ["#99e4c2", "#e7b58c", "#94b9ea", "#c7a5db"];
-  const order = stage.subjects.map((s, i) => ({ s, i, depth: project([s.x, 1, s.z])?.depth || 0 })).sort((a, b) => b.depth - a.depth);
-  for (const { s, i } of order) {
+  const depth = (x, y, z) => project([x, y, z])?.depth || 0;
+  function box(prop) {
+    const yaw = rad(prop.rotation), cos = Math.cos(yaw), sin = Math.sin(yaw);
+    const vertices = Array.from({ length: 8 }, (_, i) => {
+      const x = (i & 1 ? 0.5 : -0.5) * prop.width, z = (i & 2 ? 0.5 : -0.5) * prop.depth;
+      return [prop.x + x * cos + z * sin, prop.y + (i & 4 ? prop.height : 0), prop.z - x * sin + z * cos];
+    }).map(project);
+    const faces = [[0, 1, 5, 4], [1, 3, 7, 5], [3, 2, 6, 7], [2, 0, 4, 6], [4, 5, 7, 6]].map((face, i) => ({ points: face.map((v) => vertices[v]).filter((v) => v !== null), i })).filter((face) => face.points.length === 4).sort((a, b) => b.points.reduce((sum, p) => sum + p.depth, 0) - a.points.reduce((sum, p) => sum + p.depth, 0));
+    for (const { points, i } of faces) {
+      ctx.beginPath();
+      points.forEach((p, j) => j ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.closePath();
+      ctx.fillStyle = ["#9a795d", "#89674e", "#755741", "#9c8066", "#b79872"][i];
+      ctx.fill();
+      ctx.strokeStyle = "#d5b892";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+    const label = project([prop.x, prop.y + prop.height + 0.12, prop.z]);
+    if (guide && label) {
+      ctx.fillStyle = "#f4d2a5";
+      ctx.font = `500 ${Math.max(12, w / 60)}px system-ui`;
+      ctx.textAlign = "center";
+      ctx.fillText(prop.name, label.x, label.y);
+    }
+  }
+  const order = [
+    ...stage.subjects.map((s, i) => ({ depth: depth(s.x, 1, s.z), draw: () => actor(s, i) })),
+    ...(stage.props || []).map((prop) => ({ depth: depth(prop.x, prop.y + prop.height / 2, prop.z), draw: () => box(prop) }))
+  ].sort((a, b) => b.depth - a.depth);
+  function actor(s, i) {
     const points = body(s), p = points.map(project), color = colors[i % 4];
     const center = project([s.x, 0, s.z]);
     if (center) {
@@ -342,7 +392,9 @@ function drawStage(canvas, stage, guide = true) {
       ctx.beginPath();
       ctx.ellipse(q.x, q.y, radius, radius * 1.18, rad(s.head) * 0.2, 0, Math.PI * 2);
       ctx.fill();
-      const yaw = rad(s.rotation - stage.camera.yaw + s.head);
+      const eye = stage.eyelines?.find((e) => e.subject === i);
+      const bearing = eye ? Math.atan2(eye.x - points[0][0], eye.z - points[0][2]) : rad(s.rotation + s.head);
+      const yaw = bearing - rad(stage.camera.yaw);
       ctx.fillStyle = "#19332d";
       ctx.beginPath();
       ctx.arc(q.x + Math.sin(yaw) * radius * 0.55, q.y - radius * 0.18, Math.max(2, radius * 0.13), 0, Math.PI * 2);
@@ -353,6 +405,18 @@ function drawStage(canvas, stage, guide = true) {
         ctx.fillStyle = color;
         ctx.fillText(s.name, q.x, q.y - radius * 1.8);
       }
+    }
+  }
+  for (const item of order) item.draw();
+  if (guide) for (const eye of stage.eyelines || []) {
+    const origin = body(stage.subjects[eye.subject])[0], target = [eye.x, eye.y, eye.z];
+    line(origin, target, "#f8d993", 2);
+    const point = project(target);
+    if (point) {
+      ctx.fillStyle = "#f8d993";
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, 5, 0, Math.PI * 2);
+      ctx.fill();
     }
   }
   if (guide) {

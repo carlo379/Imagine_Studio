@@ -16,7 +16,7 @@ ROOT_FILES = {'.gitignore', '.gitattributes', '.gitleaks.toml', '.gitleaksignore
 PUBLIC_DOCS = {'docs/CONFIGURATION.md', 'docs/PUBLIC_RELEASE.md'}
 GUIDES = {'Grok_Imagine_Prompting_Guide.md', 'grok-imagine-image-2.0-prompting-guide.md', 'gpt-image-2.0-2.5-prompting-guide.md'}
 APP_DOCS = {'README.md', 'AGENT_API.md', 'AGENT_API_REFERENCE.md', 'USER_GUIDE.md', 'FILMMAKING_TOOLS_GUIDE.md',
-            'IMAGE_STUDIO_GUIDE.md', 'PRODUCTION_WORKSPACE_GUIDE.md', 'SCRIPT_TEMPLATE_GUIDE.md',
+            'DIRECTING_TOOLS_GUIDE.md', 'IMAGE_STUDIO_GUIDE.md', 'PRODUCTION_WORKSPACE_GUIDE.md', 'SCRIPT_TEMPLATE_GUIDE.md',
             'SERIES_BOOKS_GUIDE.md', 'STORY_STUDIO_GUIDE.md', 'SCRIPT_TEMPLATE.txt'}
 SCRIPTS = {'scripts/verify.py', 'scripts/check_docs.py', 'scripts/check_secrets.py', 'scripts/prepare_public_source.py', 'scripts/verify_public_source.py', 'scripts/check_public_privacy.py', 'scripts/migrate_user_data.py', 'scripts/install_linux_ffmpeg.sh'}
 APP_SCRIPTS = {'demo_song_performance.py', 'build_frontend.mjs', 'camera-isolation.cjs', 'camera-reference.cjs', 'install_parity_browser.py', 'parity-browser.json'}

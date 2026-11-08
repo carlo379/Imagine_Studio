@@ -1,7 +1,9 @@
 import catalog from "../static/camera-presets.json";
 export type Subject={name:string;asset_id:string|null;x:number;z:number;rotation:number;pose:string;arms:number;head:number};
 export type Camera={yaw:number;elevation:number;distance:number;target_x:number;target_y:number;target_z:number;lens:number};
-export type Staging={camera:Camera;subjects:Subject[];ratio:string;environment:string;style:string};
+export type Prop={name:string;x:number;y:number;z:number;width:number;height:number;depth:number;rotation:number};
+export type Eyeline={subject:number;x:number;y:number;z:number};
+export type Staging={camera:Camera;subjects:Subject[];ratio:string;environment:string;style:string;props?:Prop[];eyelines?:Eyeline[]};
 export const newSubject=(index=0):Subject=>({...catalog.defaults.subjects[0],name:`Subject ${index+1}`,...(index?{x:.8,z:.4,rotation:-25}:{})});
 export const initialStaging=():Staging=>JSON.parse(JSON.stringify(catalog.defaults));
 export const presets:Record<string,Partial<Camera>>=Object.fromEntries(catalog.camera.map(p=>[p.name,p.patch]));
@@ -17,22 +19,58 @@ function body(s:Subject):V[]{
  let hip=1,shoulder=1.5,head=1.77;const sit=s.pose==='sit',crouch=s.pose==='crouch',legs=sit||crouch;if(sit){hip=.75;shoulder=1.25;head=1.52;}if(crouch){hip=.48;shoulder=.98;head=1.25;}
  const reach=s.pose==='reach',fight=s.pose==='fight',walk=s.pose==='walk';const lift=Math.sin(rad(s.arms))*.42,spread=Math.cos(rad(s.arms))*.25;
  const joints:V[]=[[0,head,0],[0,shoulder,0],[0,hip,0],[-.23,shoulder,0],[.23,shoulder,0],[-.23-spread,shoulder+(reach?.22:fight?-.15:-.28)+lift,reach?.35:fight?.25:0],[.23+spread,shoulder+(reach?.22:fight?-.15:-.28)+lift,reach?.35:fight?.25:0],[-.28-spread,shoulder+(reach?.5:fight?.08:-.55)+lift*2,reach?.55:fight?.6:0],[.28+spread,shoulder+(reach?.5:fight?.08:-.55)+lift*2,reach?.55:fight?.6:0],[-.16,hip,0],[.16,hip,0],[-.18,sit?.65:crouch?.28:.5,sit?.55:crouch?.25:walk?.35:0],[.18,sit?.65:crouch?.28:.5,sit?.55:crouch?.25:walk?-.3:0],[-.22,.08,sit?.55:crouch?-.1:walk?.5:.05],[.22,.08,sit?.55:crouch?-.1:walk?-.45:.05]];
+ if(s.pose==='slide'){
+  joints.splice(0,joints.length,[0,.66,-.68],[0,.48,-.42],[0,.22,0],[-.22,.47,-.4],[.22,.47,-.4],
+   [-.38,.32,-.22],[.38,.35,-.35],[-.5,.15,-.05],[.48,.42,-.03],[-.16,.22,0],[.16,.22,0],
+   [-.16,.16,.52],[.18,.32,.43],[-.17,.08,.95],[.25,.08,.72]);
+ }
  const rotation=rad(s.rotation);return joints.map(([x,y,z])=>[s.x+x*Math.cos(rotation)+z*Math.sin(rotation),y,s.z-x*Math.sin(rotation)+z*Math.cos(rotation)] as V);
 }
 // A structural Canvas surface keeps the drawing code independent of the DOM.
 export type CanvasSurface=Pick<HTMLCanvasElement,'width'|'height'|'getContext'>;
 export function drawStage(canvas:CanvasSurface,stage:Staging,guide=true){
- const ctx=canvas.getContext('2d');if(!ctx)return;const w=canvas.width,h=canvas.height,project=projector(stage.camera,w,h);
+ const context=canvas.getContext('2d');if(!context)return;const ctx=context,w=canvas.width,h=canvas.height,project=projector(stage.camera,w,h);
  ctx.clearRect(0,0,w,h);const bg=ctx.createLinearGradient(0,0,0,h);bg.addColorStop(0,'#192d2b');bg.addColorStop(1,'#071513');ctx.fillStyle=bg;ctx.fillRect(0,0,w,h);
  function line(a:V,b:V,color:string,size=1){const p=project(a),q=project(b);if(!p||!q)return;ctx!.strokeStyle=color;ctx!.lineWidth=size;ctx!.lineCap='round';ctx!.beginPath();ctx!.moveTo(p.x,p.y);ctx!.lineTo(q.x,q.y);ctx!.stroke();}
  for(let i=-8;i<=8;i++){line([i,0,-8],[i,0,8],'#31514a');line([-8,0,i],[8,0,i],'#31514a');}
- const colors=['#99e4c2','#e7b58c','#94b9ea','#c7a5db'];const order=stage.subjects.map((s,i)=>({s,i,depth:project([s.x,1,s.z])?.depth||0})).sort((a,b)=>b.depth-a.depth);
- for(const {s,i} of order){const points=body(s),p=points.map(project),color=colors[i%4];
+ const colors=['#99e4c2','#e7b58c','#94b9ea','#c7a5db'];
+ const depth=(x:number,y:number,z:number)=>project([x,y,z])?.depth||0;
+ function box(prop:Prop){
+  const yaw=rad(prop.rotation),cos=Math.cos(yaw),sin=Math.sin(yaw);
+  const vertices=Array.from({length:8},(_,i):V=>{
+   const x=(i&1?.5:-.5)*prop.width,z=(i&2?.5:-.5)*prop.depth;
+   return [prop.x+x*cos+z*sin,prop.y+(i&4?prop.height:0),prop.z-x*sin+z*cos];
+  }).map(project);
+  const faces=[[0,1,5,4],[1,3,7,5],[3,2,6,7],[2,0,4,6],[4,5,7,6]]
+   .map((face,i)=>({points:face.map(v=>vertices[v]).filter(v=>v!==null),i}))
+   .filter(face=>face.points.length===4)
+   .sort((a,b)=>b.points.reduce((sum,p)=>sum+p.depth,0)-a.points.reduce((sum,p)=>sum+p.depth,0));
+  for(const {points,i} of faces){
+   ctx!.beginPath();points.forEach((p,j)=>j?ctx!.lineTo(p.x,p.y):ctx!.moveTo(p.x,p.y));ctx!.closePath();
+   ctx!.fillStyle=['#9a795d','#89674e','#755741','#9c8066','#b79872'][i];ctx!.fill();
+   ctx!.strokeStyle='#d5b892';ctx!.lineWidth=1;ctx!.stroke();
+  }
+  const label=project([prop.x,prop.y+prop.height+.12,prop.z]);
+  if(guide&&label){ctx!.fillStyle='#f4d2a5';ctx!.font=`500 ${Math.max(12,w/60)}px system-ui`;ctx!.textAlign='center';ctx!.fillText(prop.name,label.x,label.y);}
+ }
+ const order=[
+  ...stage.subjects.map((s,i)=>({depth:depth(s.x,1,s.z),draw:()=>actor(s,i)})),
+  ...(stage.props||[]).map(prop=>({depth:depth(prop.x,prop.y+prop.height/2,prop.z),draw:()=>box(prop)}))
+ ].sort((a,b)=>b.depth-a.depth);
+ function actor(s:Subject,i:number){const points=body(s),p=points.map(project),color=colors[i%4];
  const center=project([s.x,0,s.z]);if(center){ctx.fillStyle='#0007';ctx.beginPath();ctx.ellipse(center.x,center.y,center.scale*.4,center.scale*.12,0,0,Math.PI*2);ctx.fill();}
  const edges=[[1,2],[1,3],[1,4],[3,5],[5,7],[4,6],[6,8],[2,9],[2,10],[9,11],[11,13],[10,12],[12,14]];
  for(const [a,b] of edges){if(p[a]&&p[b])line(points[a],points[b],color,Math.max(3,Math.min(34,(p[a]!.scale+p[b]!.scale)*.065)));}
  const torso=[p[3],p[4],p[10],p[9]];if(torso.every(Boolean)){ctx.fillStyle=color;ctx.beginPath();torso.forEach((q,j)=>j?ctx.lineTo(q!.x,q!.y):ctx.moveTo(q!.x,q!.y));ctx.closePath();ctx.fill();}
- if(p[0]){const q=p[0]!,radius=q.scale*.14;ctx.fillStyle=color;ctx.beginPath();ctx.ellipse(q.x,q.y,radius,radius*1.18,rad(s.head)*.2,0,Math.PI*2);ctx.fill();const yaw=rad(s.rotation-stage.camera.yaw+s.head);ctx.fillStyle='#19332d';ctx.beginPath();ctx.arc(q.x+Math.sin(yaw)*radius*.55,q.y-radius*.18,Math.max(2,radius*.13),0,Math.PI*2);ctx.fill();if(guide){ctx.font=`500 ${Math.max(12,w/60)}px system-ui`;ctx.textAlign='center';ctx.fillStyle=color;ctx.fillText(s.name,q.x,q.y-radius*1.8);}}
+ if(p[0]){const q=p[0]!,radius=q.scale*.14;ctx.fillStyle=color;ctx.beginPath();ctx.ellipse(q.x,q.y,radius,radius*1.18,rad(s.head)*.2,0,Math.PI*2);ctx.fill();const eye=stage.eyelines?.find(e=>e.subject===i);
+ const bearing=eye?Math.atan2(eye.x-points[0][0],eye.z-points[0][2]):rad(s.rotation+s.head);
+ const yaw=bearing-rad(stage.camera.yaw);ctx.fillStyle='#19332d';ctx.beginPath();ctx.arc(q.x+Math.sin(yaw)*radius*.55,q.y-radius*.18,Math.max(2,radius*.13),0,Math.PI*2);ctx.fill();if(guide){ctx.font=`500 ${Math.max(12,w/60)}px system-ui`;ctx.textAlign='center';ctx.fillStyle=color;ctx.fillText(s.name,q.x,q.y-radius*1.8);}}
+ }
+ for(const item of order)item.draw();
+ if(guide)for(const eye of stage.eyelines||[]){
+  const origin=body(stage.subjects[eye.subject])[0],target:V=[eye.x,eye.y,eye.z];
+  line(origin,target,'#f8d993',2);
+  const point=project(target);if(point){ctx.fillStyle='#f8d993';ctx.beginPath();ctx.arc(point.x,point.y,5,0,Math.PI*2);ctx.fill();}
  }
  if(guide){ctx.strokeStyle='#bddacc20';ctx.lineWidth=1;for(const x of [w/3,w*2/3]){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,h);ctx.stroke();}for(const y of [h/3,h*2/3]){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke();}}
 }

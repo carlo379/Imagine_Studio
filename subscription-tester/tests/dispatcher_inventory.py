@@ -22,6 +22,7 @@ DISPATCHERS={
     'browser_controls.py':('handoff','dispatch'),
     'document_exports.py':('documents','dispatch'),
     'video_review.py':('video-review','dispatch'),
+    'directing_tools.py':('productions','review_route'), 'scene_blocking.py':('filmmaking','route'),
     'song_performance.py':('song-performance','dispatch'),
 }
 

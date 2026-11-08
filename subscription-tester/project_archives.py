@@ -29,6 +29,7 @@ MAX_JSON = 512 * 1024**2
 MAX_DOCUMENT_JSON = 64 * 1024**2
 MAX_MEMBERS = 100000
 KINDS = set('image-bible-preview asset asset-development assistant caption-job direction edit-media episode-book episode-script-draft export image-job-audit imported-video media-prompt-job opening-frame-backup opening-frame-job production scene-layout script-upload-review series-bible series-member shot timeline video-direction-backup video-direction-job world world-asset world-entity world-job world-render'.split())
+KINDS.update(('continuity-review','scene-blocking','blocking-link'))
 KINDS.update(('song-project','song-analysis','song-shot','song-review','song-assembly','song-comparison'))
 STORES = {'evidence.reviews', 'sql', 'assets', 'references', 'history', 'video.scenes', 'video.urls', 'image.drafts', 'image.jobs', 'story.series', 'story.episodes', 'story.links', 'story.chats'}
 FILE_PATH = re.compile(r'(?:assets/[A-Za-z0-9_-]+\.(?:png|jpg|jpeg|webp)|videos/[A-Za-z0-9_-]+\.mp4|edit-media/[A-Za-z0-9_-]+\.[a-z0-9]+|exports/[A-Za-z0-9_-]+/(?:export\.mp4|edit\.json|captions\.srt)|(?:video-request-snapshots|video-review-evidence)/[A-Za-z0-9_-]+/[A-Za-z0-9_-]+\.(?:json|bin|jpg))\Z')
@@ -426,6 +427,9 @@ class ProjectArchives:
                 'episode-book': {'production_id':str,'episode_id':str,'answers':dict,'guide':dict},
                 'world': {'production_id':str,'answers':dict},
                 'timeline': {'production_id':str,'clips':list,'audio':list},
+                'continuity-review': {'production_id':str,'title':str,'frames':list,'consistent':str,'changes':str,'findings':str},
+                'scene-blocking': {'production_id':str,'title':str,'geometry':dict,'views':list},
+                'blocking-link': {'shot_id':str},
                 'export': {'status':str,'snapshot':dict},
                 'imported-video': {'settings':dict,'imported_media_id':str},
                 'edit-media': {'ext':str,'mime':str},

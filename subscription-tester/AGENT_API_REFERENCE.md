@@ -1,5 +1,7 @@
 # Agent API reference
 
+See [Directing tools](DIRECTING_TOOLS_GUIDE.md) for continuity reviews, generation previews and shared scene blocking.
+
 Detailed request shapes, endpoint tables and behavior. For a short first workflow,
 start with the [Agent API guide](AGENT_API.md).
 
