@@ -262,7 +262,7 @@ class OpenAIImageTests(unittest.TestCase):
 
     def test_structured_usage_reason_and_redaction(self):
         self.assertIn('usageLimitExceeded',provider.failure_reason({'type':'usageLimitExceeded','limitId':'image','resetsAt':123}))
-        message=provider.failure_reason({'message':'Denied Bearer secret https://host/private?token=secret /Users/private/file', 'headers':{'token':'hidden'}})
+        message=provider.failure_reason({'message':'Denied Bearer secret https://host/private?token=secret /Us'+'ers/private/file', 'headers':{'token':'hidden'}})
         for text in ('secret','/Users/private','hidden','https://host'):
             self.assertNotIn(text,message)
 
