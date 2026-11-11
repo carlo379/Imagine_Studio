@@ -18,6 +18,7 @@ limits through `schema`; use `openapi.json` for the machine-readable contract.
 - [Timeline editing and accounts](#timeline-editing-and-accounts)
 - [Browser collaboration and shared drafts](#browser-collaboration-and-shared-drafts)
 - [Efficient reads](#efficient-reads)
+- [Autonomous production](#autonomous-production)
 
 ## Connection and core requests
 
@@ -1497,3 +1498,70 @@ messages. Credentials, inline image data and private URL/path locations are
 redacted. Raw event payloads and prompts are not recorded as diagnostic traces.
 No automatic generation retry or alternate provider is introduced. These details
 apply to new requests; historical messages cannot recover discarded events.
+
+## Autonomous production
+
+Endpoints for agent-run episodes with human control. The workflow, examples and the full
+error-code table are in the [Autonomous production guide](AUTONOMOUS_PRODUCTION_GUIDE.md).
+Paths are relative to `/agent/v1`. Every mutation that records a human decision requires
+`human_words`, the human's own words verbatim.
+
+### Roles: director and reviewer models
+
+| Route | Method | Body / result |
+| --- | --- | --- |
+| `roles` | GET | `{director, reviewer, source, updated_at, human_words?}`; each role is `{model, product}` or null |
+| `roles` | PUT | `{director?, reviewer?, human_words}`; `null` clears a role |
+
+With a director chosen, `POST scenes/{id}/generate` requires `agent: {model, session_id, product?}`
+and refuses another model (403 `director_identity_required`, `wrong_director_model`).
+
+### Shot kits
+
+| Route | Method | Body / result |
+| --- | --- | --- |
+| `scenes/{id}/kit` | GET | `{scene_id, revision, kit, ready, checks[{id,label,ok,detail}], missing[], hints[], has_last_frame, has_middle_frame, free_motion, has_keyframes}` |
+| `scenes/{id}/kit` | PUT | `{expected_revision, camera?, action?, end_state?, free_motion?, complex_action?, staging_asset_id?, last_frame_from_first?, middle_frame_from_first?}`; a scene revision |
+| `kit/stats` | GET | `{groups: {"complete kit"|"incomplete kit"|"first and last frames"|"first frame only"|"with middle keyframe": {takes, keep, retry, reject, keep_rate}}}` |
+
+Check IDs: `direction`, `end_state`, `complexity`, `staging`, `first_frame`, `last_frame`,
+`last_from_first`, `middle_frame`, `middle_from_first`, `no_mockup`, `prompt`. A middle
+keyframe counts only when its slot is strictly inside the take (0 < slot < duration × 3).
+
+### Production plans
+
+| Route | Method | Body / result |
+| --- | --- | --- |
+| `plans` | GET, POST | List; create `{title, notes?, items[{scene_id, label?, max_takes? (1–5, default 2)}], budget?{usage_percent?, max_takes?}}` |
+| `plans/{id}` | GET, PUT | View with `items[].state`, `items[].kit`, `totals` (estimates, spent, kits ready); edit with `expected_revision` |
+| `plans/{id}/approve` | POST | `{expected_revision, human_words}`; refused (409 `shot_kit_incomplete`) unless every kit is ready |
+| `plans/{id}/close` | POST | `{expected_revision}` |
+
+Item states: `not_started`, `in_progress`, `awaiting_review`, `retry`, `rejected`, `kept`,
+`takes_used_up`. Changes to items or budget clear the approval; title and notes do not.
+
+### Generation fields
+
+`POST scenes/{id}/generate` accepts, besides `expected_revision` and the Idempotency-Key:
+`approved: true` **or** `plan_id`; `agent {model, session_id, product?}`;
+`usage_before_percent` (0–100) or `usage_reading_unavailable: true`; and
+`allow_unapproved_start_frame`. The job records `plan`, `agent_identity`, `usage`, `kit`
+and, once finished, `human_review: {status: "pending"}`.
+
+### Review and verdicts
+
+| Route | Method | Body / result |
+| --- | --- | --- |
+| `jobs/{id}/review-packet` | GET | `{brief, story, references[], frames[{index,time_s,url}], contact_sheet_url, human_taste[], past_disagreements[], required_reviewer, director, submit}` |
+| `jobs/{id}/review-frames/{name}` | GET | `frame-00.jpg` … `frame-11.jpg` or `contact-sheet.jpg` (image/jpeg) |
+| `jobs/{id}/ai-review` | POST | `{reviewer{model, session_id, product?}, scores{story, identity, craft, performance}, issues[{severity, category, time_s?, problem, fix}], frames_examined, summary}` or `{unavailable: true, reason}`; one per take |
+| `jobs/{id}/human-review` | POST | `{verdict: keep|retry|reject, human_words, notes?, tags?, usage_after_percent? | usage_reading_unavailable?}` |
+| `jobs/{id}/usage` | POST | `{usage_after_percent}` when it was not given with the verdict |
+| `human-reviews` | GET | Every verdict, newest first, with prompt, settings, tags, notes, human words and readings |
+| `reviewer/agreement` | GET | `{compared, agreed, agreement_rate, ai_stricter, ai_looser, by_reviewer_model, recent_disagreements[]}` |
+| `usage/calibration` | GET | `{resolutions{480p|720p|1080p: {established, clean_samples, samples_needed, percent_per_second, estimate_percent{3,5,10,15}, note}}, samples[], rule}` |
+
+Issue categories: `story`, `identity`, `continuity`, `anatomy`, `craft`, `camera`,
+`performance`, `audio`, `other`. Studio computes `ai_review.suggestion`: story < 5 → reject;
+a blocking issue or any score < 6 → retry; otherwise keep. Tags: `bad_anatomy`, `off_model`,
+`wrong_action`, `flat_acting`, `continuity`, `great`.

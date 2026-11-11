@@ -25,6 +25,8 @@ from video_rules import MODELS, RATIOS, VOICES, validate_video, image_input, MOD
 from user_data import data_home, outside_source, require_migration
 STATE = data_home() / 'studio'
 CONFIG = json.loads((ROOT / 'studio-config.json').read_text())
+HUMAN_VERDICTS=('keep','retry','reject')
+HUMAN_REVIEW_TAGS=('bad_anatomy','off_model','wrong_action','flat_acting','continuity','great')
 VIDEO_ENDPOINT = 'https://api.x.ai/v1/videos/generations'
 
 
@@ -98,6 +100,12 @@ class Studio(Tester):
                           progress=None, job_id=None, video=None, request_id=None)
 
         self.agent = AgentAPI(self, CONFIG, save_json)
+        from production_plans import Plans
+        self.plans = Plans(self, save_json)
+        from director_review import DirectorReview
+        self.director_review = DirectorReview(self, save_json)
+        from shot_kit import ShotKit
+        self.shot_kit = ShotKit(self)
         self.images = ImageStudio(self, CONFIG, save_json)
         from story_studio import StoryStudio
         self.stories = StoryStudio(self, save_json)
@@ -280,11 +288,34 @@ class Studio(Tester):
             del body['reference_images']
         return validate_video(body, CONFIG)
 
-    def start_video(self, settings, approved, agent_key=None, agent_fingerprint=None):
+    def start_video(self, settings, approved, agent_key=None, agent_fingerprint=None, agent_scene=None,
+                    usage_before=None, usage_unavailable=False, plan=None, agent_identity=None, kit=None):
         if not self.mock and not CONFIG['live_generations_enabled']:
             raise ValueError('Live video generation is locked in studio-config.json.')
         if not approved:
             raise ValueError('Confirm this generation before sending it.')
+        if agent_key is None and usage_before is not None:
+            import usage_calibration
+            usage_before=usage_calibration.reading(usage_before,'usage_before_percent')
+        if agent_key is not None:
+            waiting=self.pending_human_review()
+            if waiting:
+                raise APIError('human_review_required',
+                    f"Video job {waiting[0]['id']} is waiting for human review. Show the human the result (or its error) and "
+                    "record a verdict (keep, retry or reject) before starting another agent generation.",409)
+            import usage_calibration
+            usage_before=usage_calibration.reading(usage_before,'usage_before_percent')
+            if usage_before is None and usage_unavailable is not True and not self.mock and \
+                    usage_calibration.required(self.records(),settings.get('resolution')):
+                raise APIError('usage_reading_required',
+                    f"Studio is still learning what a {settings.get('resolution')} video costs. Ask the human for their Grok usage % "
+                    "(Grok Settings → Usage) right now and send it as usage_before_percent. If they cannot read it, send "
+                    "usage_reading_unavailable: true (that take will not count toward the pattern).",409)
+            rejected=self.rejected_unchanged(agent_scene)
+            if rejected:
+                raise APIError('shot_rejected',
+                    f"The human rejected video job {rejected['id']} for this scene. Rethink the shot and save a changed "
+                    "scene before generating it again; a reroll of the same scene is refused.",409)
         from workflow_tools import start_frame_gate,usage
         frame_gate=start_frame_gate(self,settings)
         allowance_warnings=usage(self)['recent_limit_errors']
@@ -302,7 +333,9 @@ class Studio(Tester):
                 raise ValueError('Sign in first.')
             self.job = {'id': uuid.uuid4().hex, 'created_at': time.time(), 'mock': self.mock,
                         'settings': copy.deepcopy(settings), 'status': 'pending', 'video': None, 'request_id': None,
-                        'agent_key':agent_key, 'agent_fingerprint':agent_fingerprint,
+                        'agent_key':agent_key, 'agent_fingerprint':agent_fingerprint, 'agent_scene':copy.deepcopy(agent_scene),
+                        'usage':{'before':usage_before,'after':None,'unavailable':usage_unavailable is True},
+                        'plan':copy.deepcopy(plan),'agent_identity':copy.deepcopy(agent_identity),'kit':copy.deepcopy(kit),
                         'allow_unapproved_start_frame':frame_gate['override'],
                         'allowance_warnings':allowance_warnings,
                         'requested_model':body['model'], 'returned_model':None, 'model_identity':'unconfirmed'}
@@ -331,10 +364,114 @@ class Studio(Tester):
                 job.pop('http_status', None)
                 job.pop('upstream_error', None)
             job.update(status=status, video=video, message=message)
+            if job.get('agent_key') and CONFIG.get('human_review_after_agent_video',True):
+                # An agent-started generation pauses all further agent generation until a human
+                # has looked at the outcome (a finished take or a failure) in the browser.
+                job['human_review']=dict(status='pending',since=time.time())
             if re.search(r'quota|rate.?limit|usage.?limit|HTTP 429',message,re.I):job['limit_error_at']=time.time()
             self.state.update(phase=status, message=message, video=video, http_status=job.get('http_status'),
                               progress=100 if status == 'done' else None)
             save_json(self.history_path, self.history)
+
+    def save_history(self):
+        save_json(self.history_path, self.history)
+
+    def pending_human_review(self):
+        with self.lock:
+            return [j for j in self.history if (j.get('human_review') or {}).get('status')=='pending']
+
+    def rejected_unchanged(self, agent_scene):
+        """The rejected job whose scene has not been changed since, if any."""
+        if not agent_scene:return None
+        with self.lock:
+            for job in self.history:
+                review=job.get('human_review') or {}
+                if review.get('verdict')=='reject' and job.get('agent_scene')==agent_scene:return copy.deepcopy(job)
+        return None
+
+    def record_human_review(self, job_id, data, *, source):
+        """Record a person's verdict on a finished video. source is 'browser' (the human clicked)
+        or 'agent_relay' (an agent passes on the human's own words, which are required)."""
+        if not isinstance(data,dict):raise ValueError('Send a JSON object.')
+        allowed={'verdict','tags','notes','usage_after_percent','usage_reading_unavailable'}|({'human_words'} if source=='agent_relay' else set())
+        extra=set(data)-allowed-({'id'} if source=='browser' else set())
+        if extra:raise ValueError('Unsupported review field: '+', '.join(sorted(extra))+'.')
+        verdict=data.get('verdict')
+        if verdict not in HUMAN_VERDICTS:raise ValueError('verdict must be keep, retry or reject.')
+        tags=data.get('tags',[])
+        if not isinstance(tags,list) or any(t not in HUMAN_REVIEW_TAGS for t in tags):
+            raise ValueError('tags must be a list drawn from: '+', '.join(HUMAN_REVIEW_TAGS)+'.')
+        notes=data.get('notes','')
+        if not isinstance(notes,str) or len(notes)>2000:raise ValueError('notes must be text of at most 2,000 characters.')
+        notes=notes.strip()
+        import usage_calibration
+        usage=usage_calibration.reading(data.get('usage_after_percent'),'usage_after_percent')
+        unavailable=data.get('usage_reading_unavailable',False)
+        if type(unavailable) is not bool:raise ValueError('usage_reading_unavailable must be true or false.')
+        words=None
+        if source=='agent_relay':
+            words=data.get('human_words')
+            if not isinstance(words,str) or not words.strip() or len(words)>2000:
+                raise ValueError("human_words must quote the human's own verdict, verbatim (1–2,000 characters).")
+            words=words.strip()
+        elif verdict in ('retry','reject') and not notes:
+            raise ValueError('Say what to fix (retry) or why it does not work (reject) in the notes.')
+        with self.lock:
+            job=next((j for j in self.history if j['id']==job_id),None)
+            if not job:raise ValueError('Video job not found.')
+            if (job.get('human_review') or {}).get('status')!='pending':
+                raise ValueError('This video is not waiting for review.')
+            if source=='agent_relay' and self.director_review.required_before_verdict(job):
+                raise APIError('ai_review_required',"The human chose a reviewer model. Start a separate reviewer session on that model with "
+                    f"GET jobs/{job['id']}/review-packet and submit its review (or why it could not run) before relaying the human's verdict.",409)
+            readings=job.get('usage') or {}
+            if source=='agent_relay' and readings.get('before') is not None and usage is None and not unavailable:
+                raise APIError('usage_reading_required',"This take has a before reading. Ask the human for their Grok usage % now "
+                    "and send it as usage_after_percent (or usage_reading_unavailable: true).",409)
+            if usage is not None or unavailable:self._set_after(job,usage,unavailable)
+            review=dict(job['human_review'],status='reviewed',verdict=verdict,tags=list(dict.fromkeys(tags)),notes=notes,
+                        source=source,reviewed_at=time.time())
+            if words is not None:review['human_words']=words
+            job['human_review']=review
+            save_json(self.history_path, self.history)
+            return copy.deepcopy(job)
+
+    def _set_after(self, job, after, unavailable=False):
+        usage=job.setdefault('usage',{'before':None,'after':None,'unavailable':False})
+        if usage.get('after') is not None:raise ValueError('This take already has an after reading.')
+        usage.update(after=after,after_at=time.time() if after is not None else None,unavailable=usage.get('unavailable') or unavailable)
+
+    def record_usage_after(self, job_id, data):
+        """Record the Grok usage % read after a take finished (either mode)."""
+        import usage_calibration
+        if not isinstance(data,dict) or set(data)-{'id','usage_after_percent'}:raise ValueError('Send only usage_after_percent.')
+        after=usage_calibration.reading(data.get('usage_after_percent'),'usage_after_percent')
+        if after is None:raise ValueError('usage_after_percent is required.')
+        with self.lock:
+            job=next((j for j in self.history if j['id']==job_id),None)
+            if not job:raise ValueError('Video job not found.')
+            if job.get('status') in ('pending',None):raise ValueError('Wait until the take finishes, then read Usage.')
+            self._set_after(job,after)
+            save_json(self.history_path, self.history)
+            return copy.deepcopy(job)
+
+    def usage_calibration(self):
+        import usage_calibration
+        return usage_calibration.calibration(self.records())
+
+    def human_reviews(self):
+        """Every recorded verdict, newest first: the taste log agents read before writing prompts."""
+        rows=[]
+        for job in self.records():
+            review=job.get('human_review') or {}
+            if review.get('status')!='reviewed':continue
+            settings=job.get('settings') or {}
+            rows.append(dict(job_id=job['id'],scene_id=(job.get('agent_scene') or {}).get('id') or settings.get('_studio_video_id'),
+                model=job.get('requested_model'),duration=settings.get('duration'),resolution=settings.get('resolution'),
+                prompt=settings.get('prompt',''),job_status=job.get('status'),
+                usage_before_percent=(job.get('usage') or {}).get('before'),usage_after_percent=(job.get('usage') or {}).get('after'),
+                **{k:review.get(k) for k in ('verdict','tags','notes','human_words','source','reviewed_at')}))
+        return sorted(rows,key=lambda r:r.get('reviewed_at') or 0,reverse=True)
 
     def video_worker(self, body, job):
         try:
@@ -746,6 +883,30 @@ class StudioHandler(Handler):
             return self.send(200, self.app.named_library())
         if self.path == '/api/history':
             return self.send(200, self.app.records())
+        if self.path == '/api/human-reviews':
+            return self.send(200, self.app.human_reviews())
+        if self.path == '/api/usage-calibration':
+            return self.send(200, self.app.usage_calibration())
+        if self.path == '/api/plans' or self.path.startswith('/api/plans/'):
+            return self.plans_route('GET', None)
+        if self.path == '/api/roles':
+            return self.review_route(self.app.director_review.get_roles)
+        if self.path == '/api/reviewer-agreement':
+            return self.review_route(self.app.director_review.agreement)
+        if self.path == '/api/kit-stats':
+            return self.review_route(self.app.shot_kit.stats)
+        match=re.fullmatch(r'/api/scenes/([A-Za-z0-9_-]+)/kit',self.path)
+        if match:
+            return self.review_route(lambda: self.app.shot_kit.view(match[1]))
+        match=re.fullmatch(r'/api/jobs/([A-Za-z0-9_-]+)/review-packet',self.path)
+        if match:
+            return self.review_route(lambda: self.app.director_review.packet(match[1], base='/api'))
+        match=re.fullmatch(r'/api/jobs/([A-Za-z0-9_-]+)/review-frames/([A-Za-z0-9_.-]+)',self.path)
+        if match:
+            try:raw=self.app.director_review.frame_file(match[1],match[2])
+            except APIError as error:return self.send(error.status,{'error':str(error),'code':error.code})
+            self.send_response(200);self.send_header('Content-Type','image/jpeg');self.send_header('Content-Length',str(len(raw)))
+            self.send_header('Cache-Control','no-store');self.end_headers();self.wfile.write(raw);return
         if self.path == '/api/config':
             return self.send(200, {**CONFIG, 'models': MODELS, 'model_capabilities': MODEL_CAPABILITIES, 'ratios': RATIOS, 'voices': VOICES})
         if self.path.startswith('/api/assets/'):
@@ -805,8 +966,20 @@ class StudioHandler(Handler):
             if self.path == '/api/resume':
                 self.app.resume(data['id'])
                 return self.send(202, {'ok': True})
+            if self.path == '/api/video/human-review':
+                return self.send(200, self.app.record_human_review(data.get('id'), data, source='browser'))
+            if self.path == '/api/plans' or self.path.startswith('/api/plans/'):
+                return self.plans_route('POST', data)
+            if self.path == '/api/roles':
+                return self.review_route(lambda: self.app.director_review.set_roles(data, source='browser'))
+            match=re.fullmatch(r'/api/scenes/([A-Za-z0-9_-]+)/kit',self.path)
+            if match:
+                return self.review_route(lambda: self.app.shot_kit.update(match[1], data))
+            if self.path == '/api/video/usage':
+                return self.send(200, self.app.record_usage_after(data.get('id'), data))
             if self.path == '/api/video':
-                identity = self.app.start_video(data['settings'], data.get('approved') is True)
+                identity = self.app.start_video(data['settings'], data.get('approved') is True,
+                                                usage_before=data.get('usage_before_percent'))
                 return self.send(202, {'id': identity})
             return self.send(404, {'error': 'Not found.'})
         except ValueError as exc:
@@ -816,6 +989,35 @@ class StudioHandler(Handler):
             from request_diagnostics import structure_failure
             operation='validate this video request' if self.path=='/api/validate' else 'process this request'
             return self.send(400, {'error': structure_failure(exc,operation)})
+
+
+def _plans_route(self, method, data):
+    """Browser routes for production plans: the human views, approves or closes the agent's plan here."""
+    parts=[p for p in self.path.split('?')[0].split('/') if p][2:]
+    plans=self.app.plans
+    try:
+        if not parts:
+            if method=='GET':return self.send(200, plans.list())
+            return self.send(201, plans.create(data))
+        if len(parts)==1 and method=='GET':return self.send(200, plans.view(parts[0]))
+        if len(parts)==2 and method=='POST':
+            if parts[1]=='approve':return self.send(200, plans.approve(parts[0], data, source='browser'))
+            if parts[1]=='close':return self.send(200, plans.close(parts[0], data))
+            if parts[1]=='update':return self.send(200, plans.update(parts[0], data))
+        return self.send(404, {'error': 'Not found.'})
+    except APIError as error:
+        return self.send(error.status, {'error': str(error), 'code': error.code})
+
+
+StudioHandler.plans_route=_plans_route
+
+
+def _review_route(self, action):
+    try:return self.send(200, action())
+    except APIError as error:return self.send(error.status, {'error': str(error), 'code': error.code})
+
+
+StudioHandler.review_route=_review_route
 
 
 if __name__ == '__main__':

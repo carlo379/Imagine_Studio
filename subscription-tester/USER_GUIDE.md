@@ -18,6 +18,7 @@ Need to install the app? See [Setup](README.md).
 - [Finish your production in Edit](#finish-your-production-in-edit)
 - [Organize and delete productions](#organize-and-delete-productions)
 - [Work with an agent](#work-with-an-agent)
+- [Let an agent produce for you](#let-an-agent-produce-for-you)
 - [Protect your work](#protect-your-work)
 - [Troubleshooting](#troubleshooting)
 
@@ -206,6 +207,68 @@ identity still requires you. An unshared tab's unsaved edits are not visible to 
 If edits conflict, keep your local draft and use **Save draft as copy** or review
 the conflict. Discard local edits only when you intend to lose them.
 
+## Let an agent produce for you
+
+You can hand a whole episode to an agent (Claude Code, Codex or another) and stay in
+charge of the decisions that matter: which models work for you, what gets made, how much
+of your Grok allowance it may use, and whether each take is good enough. You can do all of
+this in Studio, or only by talking to your agent; Studio enforces the same rules either way.
+Agents follow the [Autonomous production guide](AUTONOMOUS_PRODUCTION_GUIDE.md).
+
+### 1. Choose your director and reviewer
+
+The model sets the quality of direction and review, so you choose it. In **Director &
+reviewer models**, name the model that should run Studio and write prompts, and the one
+that should review each take (for example, Claude Opus to direct and a GPT model to
+review). Agents must use them. After each take, your agent starts a separate reviewer
+session that sees only the story, references, frames and your past verdicts, never the
+director's reasoning. Its suggestion (Keep, Retry or Reject, with scores and issues)
+appears in the review banner; you still decide. The panel shows how often the reviewer
+agreed with you, so you can judge it, and compare reviewer models, over time.
+
+### 2. Every shot gets a kit first
+
+Before an agent spends your Grok allowance, it prepares each shot: a 3D staging of the
+scene, a real first frame made from that staging, a last frame when the shot ends in a
+specific position, a middle frame of the key pose when the action is complex (both made
+from the first frame), and a clear direction. Grok then only has to move between known
+pictures, which fails far less. The mannequin staging itself is never sent to Grok.
+
+### 3. Approve a plan once
+
+For a multi-shot episode, the agent proposes a **production plan**: the shots it will
+make, how many takes each may use, and a budget (for example, "at most 10% of my weekly
+Grok usage"). The **Production plans** panel shows each shot's kit checklist and Studio's
+cost estimate; **Approve plan** stays disabled until every kit is ready. Approve it there,
+or tell your agent. The agent can then generate only those shots, within those limits,
+without asking before each take. Any change to the shots, takes or budget needs your
+approval again.
+
+### 4. Review every take
+
+After each video an agent generates, the agent pauses until you review it. In Studio, a
+**review banner** appears with the AI reviewer's suggestion: watch the take (or read its
+error), then choose **✓ Keep**, **↻ Retry** (say what to fix) or **✗ Reject** (say why it
+does not work). Quick tags are optional. If you work only through your agent, it shows you
+the take and records your answer in your own words. **Keep** finishes a shot, **Retry**
+lets the agent fix it and try once more, and **Reject** means the shot must be rethought,
+not rerolled, and comes back to you for approval. Your verdicts are saved, and the agent
+and the reviewer read them before the next prompt and review: this is how Studio learns
+your taste.
+
+### 5. Teach Studio what a take costs
+
+Studio cannot see your Grok balance, so it learns from you. Until it knows the cost of a
+resolution, it asks for your **Grok Settings → Usage** percentage before and after each
+take: in Studio, type it in **Grok usage % now** beside Generate and again when the take
+finishes (or in the review banner); through an agent, the agent asks you. After a few
+consistent takes, Studio shows an estimate such as "720p: ~0.2% per second" and stops
+asking. Keep other Grok work out of the way between the two readings, or that take will
+not count.
+
+To turn off the pause after every agent take, set `human_review_after_agent_video` to
+`false` in `studio-config.json`. Plans, kits and budgets still apply.
+
 ## Protect your work
 
 Projects and credentials live outside the app directory. See
@@ -221,6 +284,10 @@ editing tab at a time when possible.
 | Problem | Next step |
 | --- | --- |
 | Generate is disabled | Check connection, validation, approval, starting-frame state and whether another operation is running. |
+| The agent says it is paused | A take is waiting for your verdict. Review it in the banner, or answer your agent. |
+| **Approve plan** is disabled | A shot kit is incomplete. Each shot's checklist in **Production plans** says what is missing. |
+| The agent asks for your Grok usage % | Studio is still learning that resolution's cost. Read Grok Settings → Usage and give the number. |
+| The agent says a shot was rejected | It must change the shot and ask you to approve the plan again; a rejected shot is never rerolled unchanged. |
 | Prompt or references are invalid | Read the message beside the prompt. Shorten repeated context or fix missing inputs and tags. |
 | A saved reference looks outdated | Older scenes use snapshots. Remove and reattach the reference to use its latest version. |
 | Save conflict | Keep the draft; refresh carefully or save it as a copy. |

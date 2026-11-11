@@ -4,6 +4,7 @@
   "poll_interval_seconds": 5,
   "poll_timeout_seconds": 600,
   "live_generations_enabled": true,
+  "human_review_after_agent_video": true,
   "assistant_grok_model": "grok-4.7",
   "assistant_grok_reasoning_effort": "medium",
   "download_limit_mb": 300,

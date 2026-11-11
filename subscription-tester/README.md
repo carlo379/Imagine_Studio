@@ -2,7 +2,8 @@
 
 Install Imagine Studio, connect optional providers, and maintain the local app.
 For everyday tasks, use the [User guide](USER_GUIDE.md). For automation, use the
-[Agent API guide](AGENT_API.md).
+[Agent API guide](AGENT_API.md); for agent-run episodes, the
+[Autonomous production guide](AUTONOMOUS_PRODUCTION_GUIDE.md).
 
 ## On this page
 
@@ -118,6 +119,7 @@ then restart. Keep credentials and per-user paths out of this shared file.
 | Setting | Purpose |
 | --- | --- |
 | `live_generations_enabled` | Allows or locks live requests; starting the server alone never generates media. |
+| `human_review_after_agent_video` | `true` (default) pauses agent generation after every take until the human gives a verdict. |
 | `prompt_limit_chars`, `prompt_limit_bytes` | Validation ceilings for the expanded request. These are limits, not writing targets. |
 | `upload_limit_mb`, `download_limit_mb` | Local upload and cached-download limits. |
 | `poll_interval_seconds`, `poll_timeout_seconds` | Polling behavior; a timeout does not resubmit a generation. |
@@ -189,6 +191,10 @@ bundled browser installer targets macOS arm64.
 | `agent_api.py`, `agent_openapi.py`, `agent_client.py` | Agent routes, contract and SDK/CLI. |
 | `ui/`, `static/` | Browser UI and committed build artifacts. |
 | `video_rules.py`, `prompt_guides.py` | Validation and runtime authoring guides. |
+| `production_plans.py` | Production plans: approve once, take limits and usage budget. |
+| `shot_kit.py` | Shot kits and their readiness checklist (staging, first/last/middle frames, direction). |
+| `director_review.py` | Human-chosen director/reviewer models, review packets, AI reviews and agreement. |
+| `usage_calibration.py` | Learns Grok usage % per second from the human's Usage readings. |
 | `editing_studio.py`, `editing_tools.py`, `editing_batches.py` | Timeline editing and bounded local exports. |
 | `tests/` | Offline Python and JavaScript suites. |
 

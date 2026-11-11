@@ -499,6 +499,8 @@ class AgentAPI:
             if len(parts)==3:
                 action=parts[2]
                 if action=='validate' and method=='POST':return 200,self.validation(record)
+                if action=='kit' and method=='GET':return 200,self.app.shot_kit.view(record['id'])
+                if action=='kit' and method=='PUT':return 200,self.app.shot_kit.update(record['id'],data)
                 if action=='review-prompt' and method=='POST':
                     if data.get('expected_revision')!=record['revision']:raise APIError('revision_conflict','Scene changed. Review the current revision.',409)
                     if data.get('reviewed') is not True:raise APIError('review_required','Explicitly review the video prompt first.',403)
@@ -516,9 +518,11 @@ class AgentAPI:
                     if record['archived'] and self.db['current_id']==identity:self.db['current_id']=None
                     self.save(self.path,self.db);return 200,copy.deepcopy(record)
                 if action=='generate' and method=='POST':
-                    if data.get('approved') is not True:raise APIError('approval_required','Explicit human authorization and approved=true are required.',403)
+                    plan_id=data.get('plan_id')
+                    if plan_id is not None and not isinstance(plan_id,str):raise APIError('invalid_plan','plan_id must be a plan ID.')
+                    if plan_id is None and data.get('approved') is not True:raise APIError('approval_required','Explicit human authorization and approved=true (or an approved plan_id) are required.',403)
                     if not key or not re.fullmatch(r'[A-Za-z0-9_-]{8,100}',key):raise APIError('idempotency_required','Supply an 8–100 character Idempotency-Key.')
-                    fingerprint=hashlib.sha256(json.dumps({'scene_id':identity,'revision':data.get('expected_revision'),'allow_unapproved_start_frame':data.get('allow_unapproved_start_frame',False)},sort_keys=True).encode()).hexdigest()
+                    fingerprint=hashlib.sha256(json.dumps({'scene_id':identity,'revision':data.get('expected_revision'),'allow_unapproved_start_frame':data.get('allow_unapproved_start_frame',False),**({'plan_id':plan_id} if plan_id else {})},sort_keys=True).encode()).hexdigest()
                     previous=next((j for j in self.app.records() if j.get('agent_key')==key),None)
                     if previous:
                         if previous.get('agent_fingerprint')!=fingerprint:raise APIError('idempotency_conflict','This key belongs to a different scene/revision.',409)
@@ -526,12 +530,34 @@ class AgentAPI:
                     if data.get('expected_revision')!=record['revision']:raise APIError('revision_conflict','Scene changed; review it before generation.',409)
                     if record['archived']:raise APIError('archived','Restore scene before generating.')
                     if type(data.get('allow_unapproved_start_frame',False)) is not bool:raise APIError('invalid_override','allow_unapproved_start_frame must be boolean.')
+                    agent_identity=self.app.director_review.check_director(data.get('agent'))
+                    readiness=self.app.shot_kit.readiness(record)
+                    kit_state={k:readiness[k] for k in ('ready','has_last_frame','free_motion','has_keyframes','has_middle_frame')}
+                    kit_state['missing']=readiness['missing']
+                    if plan_id:self.app.plans.authorize(plan_id,record)
                     settings=self.compile(record['scene'],data.get('allow_unapproved_start_frame',False),validate=False)
                     settings['_studio_video_id']=record['id']
                     if record.get('story_context'):settings['_studio_story']=copy.deepcopy(record['story_context'])
-                    identity=self.app.start_video(settings,True,agent_key=key,agent_fingerprint=fingerprint)
+                    identity=self.app.start_video(settings,True,agent_key=key,agent_fingerprint=fingerprint,agent_scene={'id':record['id'],'revision':record['revision']},
+                        usage_before=data.get('usage_before_percent'),usage_unavailable=data.get('usage_reading_unavailable',False),
+                        plan={'id':plan_id,'item':record['id']} if plan_id else None,agent_identity=agent_identity,kit=kit_state)
                     return 202,next(j for j in self.app.records() if j['id']==identity)
         if parts==['jobs'] and method=='GET':return 200,self.app.records()
+        if parts==['human-reviews'] and method=='GET':return 200,self.app.human_reviews()
+        if parts==['usage','calibration'] and method=='GET':return 200,self.app.usage_calibration()
+        if parts==['roles']:
+            if method=='GET':return 200,self.app.director_review.get_roles()
+            if method=='PUT':return 200,self.app.director_review.set_roles(data,source='agent_relay')
+        if parts==['reviewer','agreement'] and method=='GET':return 200,self.app.director_review.agreement()
+        if parts==['kit','stats'] and method=='GET':return 200,self.app.shot_kit.stats()
+        if parts==['plans']:
+            if method=='GET':return 200,self.app.plans.list()
+            if method=='POST':return 201,self.app.plans.create(data)
+        if len(parts)>=2 and parts[0]=='plans':
+            if len(parts)==2 and method=='GET':return 200,self.app.plans.view(parts[1])
+            if len(parts)==2 and method=='PUT':return 200,self.app.plans.update(parts[1],data)
+            if len(parts)==3 and parts[2]=='approve' and method=='POST':return 200,self.app.plans.approve(parts[1],data,source='agent_relay')
+            if len(parts)==3 and parts[2]=='close' and method=='POST':return 200,self.app.plans.close(parts[1],data)
         if len(parts)>=2 and parts[0]=='jobs':
             job=next((j for j in self.app.records() if j['id']==parts[1]),None)
             if not job:raise APIError('not_found','Job not found.',404)
@@ -544,6 +570,10 @@ class AgentAPI:
                     from frame_tools import capture
                     return 201,capture(self.app,job,data)
                 if parts[2]=='resume' and method=='POST':self.app.resume(job['id']);return 202,{'id':job['id']}
+                if parts[2]=='human-review' and method=='POST':return 200,self.app.record_human_review(job['id'],data,source='agent_relay')
+                if parts[2]=='usage' and method=='POST':return 200,self.app.record_usage_after(job['id'],data)
+                if parts[2]=='review-packet' and method=='GET':return 200,self.app.director_review.packet(job['id'],base='/agent/v1')
+                if parts[2]=='ai-review' and method=='POST':return 200,self.app.director_review.submit(job['id'],data)
                 if parts[2]=='download' and method=='GET':return 200,(self.app.download(job['id']).read_bytes(),{'mov':'video/quicktime','webm':'video/webm'}.get(self.app.download(job['id']).suffix.lstrip('.'),'video/mp4'))
                 if parts[2]=='reuse' and method=='POST':
                     settings=job['settings'];scene=settings.get('_studio_scene')
@@ -553,6 +583,8 @@ class AgentAPI:
                             'voices':[{'voice':v['voice_id']} for v in settings.get('reference_audios',[])],
                             'keys':[{'source':k['image'],'slot':round(k['timestamp_s']*3)} for k in settings.get('keyframes',[])]}
                     return 201,self.create({'title':data.get('title','Reused scene'),'scene':scene,'story_context':settings.get('_studio_story')})
+            if len(parts)==4 and parts[2]=='review-frames' and method=='GET':
+                return 200,(self.app.director_review.frame_file(job['id'],parts[3]),'image/jpeg')
         if parts==['image-test'] and method=='POST':
             return self.app.diagnostics.start(data,key,self.config['prompt_limit_chars'])
         if len(parts)==2 and parts[0]=='image-test' and method=='GET':return 200,self.app.diagnostics.get(parts[1])

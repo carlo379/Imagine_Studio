@@ -1,8 +1,42 @@
 # Imagine Studio
 
-A local filmmaking workspace for story planning, image and video direction,
-asset continuity, review, and timeline editing/export. Humans and agents use the
-same saved projects and validation rules. The browser UI runs on localhost.
+A local filmmaking studio for AI video. Take a story from idea to a finished, edited
+video: series bible and scripts, storyboards, 3D shot staging, image and video generation
+with **Grok Imagine** (plus OpenAI images and writing), review, timeline editing and
+export. Everything runs on your computer; the browser UI is on localhost.
+
+Humans and AI agents use the same projects and rules. **You can work directly in the
+browser, or let an agent (Claude Code, Codex or another) produce for you through the local
+Agent API** while you stay in charge of models, plans, spending and taste.
+
+## What it does
+
+- **Develop:** series bibles, characters, locations and props with approved reference
+  images; scripts split into scenes; episode books.
+- **Storyboard:** shots with 3D staging (posable mannequins, props, camera and lens),
+  continuity review and approved starting frames.
+- **Generate:** Grok Imagine video with first, last and middle frames, references and
+  voices; Grok and OpenAI images; validation and an exact request preview before anything
+  is sent.
+- **Review and learn:** keep, retry or reject every take; your verdicts become a taste log
+  that agents and reviewers read before the next prompt.
+- **Edit:** a timeline with trims, transitions, audio, titles and captions, exported locally
+  with FFmpeg at no AI cost.
+
+### Autonomous production with control
+
+- **You choose the models:** which one directs and which one reviews each take.
+- **Shot kits:** every shot gets 3D staging and approved frames before Grok is used, so the
+  video model moves between known pictures instead of inventing everything.
+- **Approve a plan once:** the shots, takes per shot and a usage budget. The agent then
+  works within it.
+- **Every take is reviewed:** an independent AI reviewer session suggests a verdict; you
+  decide. Studio tracks how often the reviewer agrees with you.
+- **Costs are learned, not guessed:** Studio learns what a take costs from your Grok usage
+  readings and estimates each plan.
+
+See the [Autonomous production guide](subscription-tester/AUTONOMOUS_PRODUCTION_GUIDE.md).
+Agents should start at [AGENTS.md](AGENTS.md).
 
 ## Install
 
@@ -58,9 +92,16 @@ manifest and all referenced chunks together. `package-lock.json` is committed.
 
 ## Documentation
 
+- **For agents: [AGENTS.md](AGENTS.md)**, the starting point for any AI agent
 - [User guide](subscription-tester/USER_GUIDE.md)
+- [Autonomous production guide](subscription-tester/AUTONOMOUS_PRODUCTION_GUIDE.md)
 - [Application and integration setup](subscription-tester/README.md)
-- [Agent API](subscription-tester/AGENT_API.md)
+- [Agent API guide](subscription-tester/AGENT_API.md) and [reference](subscription-tester/AGENT_API_REFERENCE.md)
+- [Directing tools](subscription-tester/DIRECTING_TOOLS_GUIDE.md), [Image Studio](subscription-tester/IMAGE_STUDIO_GUIDE.md),
+  [Series Bible and episode books](subscription-tester/SERIES_BOOKS_GUIDE.md),
+  [Story Studio](subscription-tester/STORY_STUDIO_GUIDE.md),
+  [production workspace](subscription-tester/PRODUCTION_WORKSPACE_GUIDE.md),
+  [filmmaking tools](subscription-tester/FILMMAKING_TOOLS_GUIDE.md)
 - [Model prompting guides](docs/prompting-guides/)
 - [Grok Imagine prompting guide](docs/prompting-guides/Grok_Imagine_Prompting_Guide.md)
 - [Security and disclosure](SECURITY.md)
