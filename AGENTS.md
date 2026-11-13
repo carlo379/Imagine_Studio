@@ -29,6 +29,7 @@ Read, in this order:
    [Series Bible and episode books](subscription-tester/SERIES_BOOKS_GUIDE.md),
    [Story Studio](subscription-tester/STORY_STUDIO_GUIDE.md),
    [production workspace](subscription-tester/PRODUCTION_WORKSPACE_GUIDE.md),
+   [music videos](subscription-tester/MUSIC_VIDEO_GUIDE.md) (speech-led, beat-locked, three delivery modes; start with its runbook),
    [filmmaking tools](subscription-tester/FILMMAKING_TOOLS_GUIDE.md).
 
 ### To change Studio's code (develop it)
@@ -96,6 +97,7 @@ generation is a **job**. For autonomous work:
 | `subscription-tester/studio_server.py` | Local HTTP server, browser routes and media orchestration |
 | `subscription-tester/agent_api.py`, `agent_openapi.py`, `agent_client.py` | Agent API, its OpenAPI contract, the SDK and CLI |
 | `subscription-tester/production_plans.py`, `shot_kit.py`, `director_review.py`, `usage_calibration.py` | Autonomous production: plans, shot kits, roles and AI review, cost learning |
+| `subscription-tester/music_video/` | Music-video toolkit: beats, lyric fitting, speech sync, board audit, render; `/agent/v1/music-video` |
 | `subscription-tester/*_studio.py`, `story_*.py`, `series_builder.py`, `world_workshop.py` | Story, series, image, production and editing features |
 | `subscription-tester/ui/`, `static/` | Browser UI (React/TypeScript sources and committed builds, plus plain scripts) |
 | `subscription-tester/tests/` | Offline Python and JavaScript suites |

@@ -385,6 +385,7 @@ class AgentAPI:
         if parts and parts[0]=='productions':return self.app.productions.dispatch(method,parts[1:],data,key)
         if parts and parts[0]=='editing':return self.app.editing.dispatch(method,parts[1:],data,key)
         if parts and parts[0]=='song-performance':return self.app.song_performance.dispatch(method,parts[1:],data,key)
+        if parts and parts[0]=='music-video':return self.app.music_video.dispatch(method,parts[1:],data,key)
         if parts and parts[0]=='filmmaking':return self.app.filmmaking.dispatch(method,parts[1:],data,key)
         if parts and parts[0]=='creative':return self.app.creative.dispatch(method,parts[1:],data,key)
         if parts and parts[0]=='asset-studio':return self.app.asset_studio.dispatch(method,parts[1:],data,key)

@@ -121,6 +121,8 @@ class Studio(Tester):
         self.editing=EditingStudio(self)
         from song_performance import SongPerformance
         self.song_performance=SongPerformance(self)
+        from music_video.service import MusicVideo
+        self.music_video=MusicVideo(self)
         from filmmaking_studio import FilmmakingStudio
         self.filmmaking=FilmmakingStudio(self)
         from media_prompting import MediaPrompting

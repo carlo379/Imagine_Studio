@@ -1278,6 +1278,13 @@ confirms a team capability denial on this connection; it does not establish
 that OAuth can never receive partner access. Have xAI enable the capability
 before retrying. Do not attempt alternate credentials or substitute preset speech.
 
+## Music video routes
+
+`/agent/v1/music-video/...` (schema, projects, analyze, align, lint, board/draft, board, audit, previz, previz/render, previz/stills, keyframes, keyframes/sheet, keyframes/packet, keyframes/reviews, keyframes/handoff,
+takes, triage, sound, look, render-plan, render, release, line-times/refine, prompts, prompts/draft, takes/last-frame,
+cut/sheets, cut/reviews, code-shots, plates) are local
+and free and never generate. Modes, rules and the loop are in [MUSIC_VIDEO_GUIDE.md](MUSIC_VIDEO_GUIDE.md).
+
 ## Song Performance workspace
 
 Plan song-clock shots, review take windows and assemble separate working edits

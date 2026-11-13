@@ -14,7 +14,10 @@ import unittest
 from agent_client import StudioClient, AgentError
 from agent_api import APIError
 from studio_server import StudioHandler
-from tests import test_project_archives as fixtures
+try:
+    import test_project_archives as fixtures      # the tests folder is on the path (unittest discover -s tests)
+except ImportError:
+    from tests import test_project_archives as fixtures
 
 
 class AgentArchiveImportTests(unittest.TestCase):

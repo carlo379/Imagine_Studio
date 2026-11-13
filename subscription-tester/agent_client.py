@@ -32,7 +32,7 @@ class StudioClient(SongClient):
         self.token=Path(token_file or data_home()/'studio/agent-token').expanduser().read_text().strip()
         self.opener=build_opener(ProxyHandler({}), LocalOnlyRedirects())
 
-    def request(self,path='',method='GET',data=None,idempotency_key=None,*,params=None):
+    def request(self,path='',method='GET',data=None,idempotency_key=None,*,params=None,timeout=30):
         if not isinstance(path,str) or '?' in path or '#' in path or '..' in path or '://' in path:
             raise ValueError('Use a relative API route.')
         if params is not None:
@@ -43,7 +43,7 @@ class StudioClient(SongClient):
         if idempotency_key:headers['Idempotency-Key']=idempotency_key
         req=Request(self.base+'/'+path.lstrip('/'),data=json.dumps(data).encode() if data is not None else None,headers=headers,method=method)
         try:
-            with self.opener.open(req,timeout=30) as response:
+            with self.opener.open(req,timeout=timeout) as response:
                 raw=response.read()
                 return json.loads(raw) if response.headers.get_content_type()=='application/json' else raw
         except HTTPError as e:

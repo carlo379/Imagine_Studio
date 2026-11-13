@@ -37,3 +37,8 @@ development; those files and their history are not included in this edition. The
 This exclusion policy is the clearance path for material whose public distribution
 permission has not been established; it is not a claim that such permission was
 obtained. A source manifest records exactly what was included and excluded.
+
+
+## three.js (previs viewer)
+
+`subscription-tester/static/vendor/three/` contains three.js r180 (MIT License, Copyright 2010-2025 three.js authors), vendored unmodified from the npm package `three@0.180.0`. Its license text is in `static/vendor/three/LICENSE`. It is used only by `static/previz.js`, the offline previs viewer.

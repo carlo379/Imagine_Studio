@@ -17,9 +17,10 @@ PUBLIC_DOCS = {'docs/CONFIGURATION.md', 'docs/PUBLIC_RELEASE.md'}
 GUIDES = {'Grok_Imagine_Prompting_Guide.md', 'grok-imagine-image-2.0-prompting-guide.md', 'gpt-image-2.0-2.5-prompting-guide.md'}
 APP_DOCS = {'README.md', 'AGENT_API.md', 'AGENT_API_REFERENCE.md', 'AUTONOMOUS_PRODUCTION_GUIDE.md', 'USER_GUIDE.md', 'FILMMAKING_TOOLS_GUIDE.md',
             'DIRECTING_TOOLS_GUIDE.md', 'IMAGE_STUDIO_GUIDE.md', 'PRODUCTION_WORKSPACE_GUIDE.md', 'SCRIPT_TEMPLATE_GUIDE.md',
-            'SERIES_BOOKS_GUIDE.md', 'STORY_STUDIO_GUIDE.md', 'SCRIPT_TEMPLATE.txt'}
+            'SERIES_BOOKS_GUIDE.md', 'STORY_STUDIO_GUIDE.md', 'MUSIC_VIDEO_GUIDE.md', 'SCRIPT_TEMPLATE.txt'}
 SCRIPTS = {'scripts/verify.py', 'scripts/check_docs.py', 'scripts/check_secrets.py', 'scripts/prepare_public_source.py', 'scripts/verify_public_source.py', 'scripts/check_public_privacy.py', 'scripts/migrate_user_data.py', 'scripts/install_linux_ffmpeg.sh'}
-APP_SCRIPTS = {'demo_song_performance.py', 'build_frontend.mjs', 'camera-isolation.cjs', 'camera-reference.cjs', 'install_parity_browser.py', 'parity-browser.json'}
+APP_SCRIPTS = {'previz-render.mjs', 'demo_song_performance.py', 'build_frontend.mjs', 'camera-isolation.cjs', 'camera-reference.cjs', 'install_parity_browser.py', 'parity-browser.json'}
+VENDOR_NOTICES = {'subscription-tester/static/vendor/three/LICENSE', 'subscription-tester/static/vendor/three/README.txt'}
 MEDIA = {'subscription-tester/tests/fixtures/ducking-speech.wav'}
 PUBLIC_DATA = {'package.json', 'package-lock.json', 'studio-config.json', 'tsconfig.json', 'prompt_check_rules.json', 'static/camera-presets.json', 'static/build/manifest.json'}
 
@@ -27,7 +28,7 @@ def eligible(name):
     path = Path(name)
     if re.search(r'(^|/)(\.env[^/]*|\.state|\.deps|\.venv|node_modules|secrets?|user-data|workspaces|exports|backups|screenshots|codex-reports)(/|$)', name):
         return False
-    if name in ROOT_FILES or name in PUBLIC_DOCS or name in SCRIPTS or name in MEDIA:
+    if name in ROOT_FILES or name in PUBLIC_DOCS or name in SCRIPTS or name in MEDIA or name in VENDOR_NOTICES:
         return True
     if name.startswith('.github/workflows/') or name.startswith('LICENSES/'):
         return True

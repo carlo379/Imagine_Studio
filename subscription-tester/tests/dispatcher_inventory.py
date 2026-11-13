@@ -24,6 +24,7 @@ DISPATCHERS={
     'video_review.py':('video-review','dispatch'),
     'directing_tools.py':('productions','review_route'), 'scene_blocking.py':('filmmaking','route'),
     'song_performance.py':('song-performance','dispatch'),
+    'music_video/service.py':('music-video','dispatch'),
 }
 
 def route_expr(node, aliases):

@@ -414,6 +414,8 @@ def specification():
             'content':{mime:{'schema':{'type':'string','format':'binary'}} for mime in ('audio/wav','audio/mpeg')}}
     from song_contracts import contracts as song_contracts
     parity_schemas.update(song_contracts(paths,operation))
+    from music_video.contracts import contracts as music_video_contracts
+    parity_schemas.update(music_video_contracts(paths,operation))
     from project_archives import MAX_ARCHIVE, MAX_EXPANDED, MAX_JSON, MAX_DOCUMENT_JSON, MAX_MEMBERS, VERSION
     parity_schemas['ProjectArchiveTask'] = {
         'type': 'object', 'required': ['id', 'operation', 'status', 'message', 'progress'],
