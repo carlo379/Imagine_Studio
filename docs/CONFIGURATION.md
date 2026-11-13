@@ -11,6 +11,7 @@ Local optional environment configuration:
 | --- | --- | --- |
 | `OPENAI_API_KEY` | `YOUR_OWN_KEY` | Explicitly selected, separately billed OpenAI API image models |
 | `IMAGINE_CAMERA_REFERENCE_BROWSER` | `/absolute/path/to/test-browser` | Optional test-only browser pixel comparison |
+| `IMAGINE_PREVIZ_BROWSER` | `/absolute/path/to/chrome` | Optional Chrome/Chromium for music-video previz, stills, plates and code shots (headless, throwaway profile) |
 
 No key is required for mock mode. Subscription connections use the application's
 sign-in flow. Keep private environment files, provider credentials, `.state/`,

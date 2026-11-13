@@ -11,7 +11,11 @@ audited storyboard, measured takes, every word on screen, one local render. All 
 - Audio Grok generates while *simulating singing* is **never used**. Only a take that was asked to speak a line
   (kind `spoken`) may contribute its soundtrack, and only as speech. Every other shot is visual-only: audio `none`, and
   its prompt must not ask the model to sing, speak, lip-sync or quote words. The audit and the renderer both enforce it.
-- Takes are slipped by trimming their start (picture and sound together), never stretched, so lip-sync is untouched.
+- Spoken takes are only trimmed at the start (picture and sound together), never retimed, so lip-sync is untouched.
+  Visual-only takes are not slowed either, unless you choose to (slowed motion steps visibly).
+- A take's first two frames are never shown (the first is the sharper input still and pops), and the first shot
+  always starts at 0, so the picture stays locked to the song.
+- No grade or grain until the human asks for it: color is made in the pictures.
 - The downbeat phase and section names are guesses; confirm them by ear (`phase` in a patch re-derives the bars).
 
 ## Runbook for agents: start here
@@ -95,26 +99,31 @@ on every production-rule 409 from the generation routes (see the
 Lines the song's vocal carries become `sung_cut` shots. Pick the mode per project and per situation: spoken-word is
 the cleanest; hooks keep the real vocal; muted spans keep the real vocal everywhere except under her speech.
 
-## The loop
+## What the core steps check
 
-1. `POST projects` with `title`, `production_id`, `mode`, `master` (an uploaded song), `lyrics`, optional `stems`,
-   `song_has_vocals`, `spoken_lines`, `price_per_second`.
-2. `POST projects/{id}/analyze`: tempo, beats, bars, downbeat guess, sections. Confirm the phase; fix with `PATCH phase`.
-   Then `POST projects/{id}/align` with word times from a transcript of the vocal (a local Whisper model works) so the board
-   follows the song's real line times.
-3. `GET projects/{id}/lint`: digits, symbols and acronyms to spell out; each line's bar slot and fill.
-4. `POST projects/{id}/board/draft`, then `PATCH projects/{id}/board` to write each shot's `prompt` and `purpose`.
-   A spoken shot's prompt must quote its lyric line exactly.
-5. `GET projects/{id}/audit`: must be `ok` before any spend (bar-line cuts, 7-14 shots a minute, every line covered,
-   quote match, audio rules, mode requirements, cost ceiling = seconds x takes x your calibrated price).
-6. Generate takes through the production flow with the human's approvals, one at a time. Attach each with
-   `POST projects/{id}/takes` (`shot_id`, `source`, optional `heard_words` from a transcript). Spoken shots return the
-   measured speech window, the beat placement (`in_point_s` to trim), the pace check and the word-error check. A take
-   that cannot land on a beat within 0.35 s, or says the wrong words, needs a retake or a cover shot.
-   Every attached take is triaged (see Finishing tools); visual-only shots also get their best window.
-7. `POST projects/{id}/render-plan` previews placements, mute spans and the lyric gate. `POST projects/{id}/render`
-   writes the cut under the workspace `music-video/` folder (FFmpeg; song ducked under speech; loudness normalized;
-   lyrics burned in word by word with Pillow, so FFmpeg needs no text filters).
+- **`POST projects`** takes `title`, `production_id`, `mode`, `master` (an uploaded song), `lyrics`, and optional
+  `stems`, `song_has_vocals`, `spoken_lines` and `price_per_second`.
+- **`analyze`** measures tempo, beats, bars, a downbeat guess and sections.
+- **`transcribe`** runs as a background job on the local model; poll `GET transcribe-jobs/{id}`.
+- **`align`** places each lyric line using the job's words.
+- **`line-times/refine`** moves each line's edges onto the vocal stem, because recognisers start words early.
+  The board, the mute spans and the on-screen lyrics all follow these times.
+- **`lint`** lists digits, symbols and acronyms to spell out as sung, and each line's bar slot.
+- **`audit`** must be `ok` before any spend. It checks:
+  - cuts on bar lines, a first shot at 0, and 7-14 shots a minute
+  - every line covered, with an exact quote in the spoken shots
+  - the audio rules and the mode's requirements
+  - the board gates and prompt checks (see Craft tools)
+  - the cost ceiling: seconds x takes x your calibrated price
+- **`takes`** triages every take.
+  - Spoken shots return the measured speech, the placement (`in_point_s` to trim, with the first syllable within
+    0.1 s of a beat, `beat_error_s`), a pace check and, with `heard_words`, a word check. A take that cannot land
+    on a beat or says the wrong words needs a retake or a cover shot.
+  - Visual-only shots get their best window.
+- **`render-plan`** previews placements, mute spans, sound timing, slowed shots and the lyric gate.
+- **`render`** writes the cut with FFmpeg: the song ducked (or its vocal muted) under speech, loudness normalized,
+  lyrics burned in word by word with Pillow, and file metadata stripped. Download it through
+  `GET projects/{id}/files`.
 
 ## Previz: a free 3D stand-in video before any paid take
 
@@ -129,8 +138,9 @@ stick figure. Judge pacing, framing variety, the reveal and the lyric timing for
   for a 65 s video at 540x960). It needs Node and a Chromium-family browser: set `IMAGINE_PREVIZ_BROWSER`, or it uses
   Studio's pinned test browser, Playwright's cached headless shell, then Chrome. It uses a throwaway profile, never
   yours.
-- Humans: open `static/previz.html` over a local web server (module scripts do not load from `file://`), choose the spec
-  JSON and the song, and scrub or play with the real audio. A spec can also come from `?spec=URL`.
+- Humans: open **`/previz`** in Studio (for example http://127.0.0.1:8765/previz), choose the spec JSON (the agent
+  can save it from `GET projects/{id}/previz`) and the song, then scrub or play with the real audio. **Save still**
+  saves a clean PNG of the current moment.
 - Frames are deterministic: the same time always gives the same picture, so the viewer and the render agree.
 - The previz is a stand-in. It never reaches the video model, and the 3D staging render still must not be sent to the
   video model. A clean previz still may be given to the image model as a composition reference, the same way Studio's
@@ -153,16 +163,16 @@ not use the Grok video allowance). The approved stills later become the takes' f
   `bedside_machine`) and an opening frame for every board shot. They also catch board changes. They refuse prompts
   that quote words, contain the lyric line, or ask anyone to sing or speak. A still is a picture, and image models
   paint quoted words as text. `previz_stale` is true when the previz changed after the plan was drafted.
-- `PATCH projects/{id}/keyframes` edits `stills` (`name`, `moment`, `prompt`, `t` inside the shot), `references`,
-  `candidates` or `price_per_image`. A redrafted board clears the plan.
+- `PATCH projects/{id}/keyframes` edits `stills` (`name`, `moment`, `prompt`, `t` inside the shot, and the review
+  fields below), `references`, `candidates` (per still) or `price_per_image`. A redrafted board clears the plan.
 - `POST projects/{id}/previz/stills` (optional `stills: [{name, t}]`) writes clean PNGs, with no PREVIZ label, timecode
   or lyrics, to `music-video/{id}/stills-r{revision}/`. They are taken at the plan's still times (or each shot's
   opening instant when there is no plan) and recorded on the plan as `previz_still`, so each generated still can be
-  compared with its planned composition. Humans can press **Save still** in `static/previz.html`.
+  compared with its planned composition. Humans can press **Save still** in `/previz`.
 - Nothing here generates an image. Generating the batch is a spend the human approves.
 
-Lyric timing on song-carried lines is estimated from the slot, not aligned to the vocal, and the render plan says so.
-Changing the mode, lyrics, spoken lines or phase clears the board and its takes.
+Changing the mode, lyrics, spoken lines or phase clears the board and its takes; so do `analyze`, `align` and
+`line-times/refine`. Redraft the board afterwards.
 
 ## Finishing tools
 
@@ -204,8 +214,9 @@ texture over the whole cut. Cutaways take the look of the section they sit in.
   closing still made by editing the approved opening one.
 - `POST projects/{id}/keyframes/sheet` draws comparison sheets: the previz composition, then candidates A, B, C...
   with the lyric line, approvals outlined and review suggestions shown.
-- `POST projects/{id}/keyframes/handoff` with `scenes: {shot_id: scene_id}` puts the approved stills into Studio scenes
-  as first (and last) frames. It saves the previz still as the kit's staging reference (Studio keeps it out of the
+- `POST projects/{id}/scenes` creates one Studio scene per board shot, once, and remembers the mapping.
+- `POST projects/{id}/keyframes/handoff` puts the approved stills into those scenes as first (and last) frames. By
+  default it covers every shot whose stills are all approved; pass `scenes: {shot_id: scene_id}` to choose. It saves the previz still as the kit's staging reference (Studio keeps it out of the
   video request) and fills the camera and the end state (or free motion). Write the action and decide
   `complex_action` in the kit.
 
@@ -275,6 +286,12 @@ ellipse, polygon or path with a `depth` for cast shadows, a fixed `palette`, `gr
 scripts, images or external links). It saves the plate as an image asset; with `use_as_set` it becomes the keyframe
 plan's set reference. Ask the image model to rebuild it as a real, physical set for every still, so the world stays
 one place.
+
+## For humans in the browser
+
+The music-video toolkit is agent-first: your agent runs it through the Agent API and stops at each checkpoint for
+your decision. In Studio you can open `/previz` to watch the stand-in video with the song, and you review stills,
+takes and cuts as the agent shows them. The other music-video steps have no Studio screens yet.
 
 Python: `from music_video import beats, lyrics, speech, board, modes, lyric_text, render, previz, keyframes, triage, sound, grade, review,
 release, stemtimes, grokprompt, gates, plates` (standard library, FFmpeg

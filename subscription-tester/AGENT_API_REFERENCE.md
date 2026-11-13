@@ -1282,8 +1282,9 @@ before retrying. Do not attempt alternate credentials or substitute preset speec
 
 `/agent/v1/music-video/...` (schema, projects, analyze, align, lint, board/draft, board, audit, previz, previz/render, previz/stills, keyframes, keyframes/sheet, keyframes/packet, keyframes/reviews, keyframes/handoff,
 takes, triage, sound, look, render-plan, render, release, line-times/refine, prompts, prompts/draft, takes/last-frame,
-cut/sheets, cut/reviews, code-shots, plates) are local
-and free and never generate. Modes, rules and the loop are in [MUSIC_VIDEO_GUIDE.md](MUSIC_VIDEO_GUIDE.md).
+cut/sheets, cut/reviews, code-shots, plates, transcribe, transcribe-jobs, scenes, files) are local and free and never
+generate. The order of work, modes and rules are in [MUSIC_VIDEO_GUIDE.md](MUSIC_VIDEO_GUIDE.md), starting with its
+runbook. Renders can take minutes: pass a longer `timeout` to `StudioClient.request`.
 
 ## Song Performance workspace
 

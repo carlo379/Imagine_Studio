@@ -17,7 +17,7 @@ const mime = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'applica
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
   if (url.pathname === '/spec.json') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify(spec)); }
-  const file = path.resolve(staticDir, '.' + decodeURIComponent(url.pathname));
+  const file = path.resolve(staticDir, '.' + decodeURIComponent(url.pathname).replace(/^\/static\//, '/'));
   if (!file.startsWith(staticDir + path.sep) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404); return res.end(); }
   res.writeHead(200, { 'content-type': mime[path.extname(file)] || 'application/octet-stream' });
   fs.createReadStream(file).pipe(res);

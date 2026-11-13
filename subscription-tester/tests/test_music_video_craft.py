@@ -263,6 +263,20 @@ class CraftApiTests(finish.FinishApiTests):
             time.sleep(.05)
         self.assertEqual(got['status'], 'error')
 
+    def test_aligned_lines_time_the_on_screen_lyrics(self):
+        p = self.board()
+        pid = p['id']
+        al = self.call('POST', f'projects/{pid}/align', dict(expected_revision=p['revision'], words=[
+            dict(w=w, s=2.1 + i * .3, e=2.3 + i * .3) for i, w in enumerate('I woke up in a city'.split())] + [
+            dict(w=w, s=12.1 + i * .3, e=12.3 + i * .3) for i, w in enumerate('I am not a robot'.split())]))['project']
+        p = self.call('POST', f'projects/{pid}/board/draft', dict(expected_revision=al['revision']))
+        p = self.call('PATCH', f'projects/{pid}/board', dict(expected_revision=p['revision'], shots=[
+            dict(id=s['id'], purpose='beat', prompt=f'She says: "{s["text"]}"' if s['kind'] == 'spoken' else 'Neon street, slow push in. No speech.') for s in p['shots']]))
+        p = self.attach_all(p)
+        plan = self.call('POST', f'projects/{pid}/render-plan', dict(expected_revision=p['revision']))
+        self.assertEqual(plan['approximate_lyric_lines'], 0)
+        self.assertEqual(plan['notes'], [])
+
     def test_scenes_from_board_are_made_once_and_feed_the_handoff(self):
         p = self.board()
         pid = p['id']

@@ -790,6 +790,7 @@ class StudioHandler(Handler):
         if self.path.startswith('/auth/mock?'):
             try:self.server.accounts.mock_callback(self,parse_qs(urlsplit(self.path).query));return self.send(200,b'<!doctype html><title>Mock connection</title><p>Mock account connected. No provider contacted.</p><a href="/">Continue to Studio</a><script src="/static/auth-complete.js"></script>','text/html; charset=utf-8')
             except Exception:return self.send(400,{'error':'Mock sign-in did not finish.'})
+        if urlsplit(self.path).path=='/previz':return self.send(200,(ROOT/'static/previz.html').read_bytes(),'text/html; charset=utf-8')
         if self.path=='/static/workspace.js':
             # Scope browser drafts, and reject stale tabs after account switches.
             namespace='' if self.workspace_id=='local-owner' else 'workspace-'+self.workspace_id+':'

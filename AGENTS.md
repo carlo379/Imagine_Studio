@@ -97,7 +97,7 @@ generation is a **job**. For autonomous work:
 | `subscription-tester/studio_server.py` | Local HTTP server, browser routes and media orchestration |
 | `subscription-tester/agent_api.py`, `agent_openapi.py`, `agent_client.py` | Agent API, its OpenAPI contract, the SDK and CLI |
 | `subscription-tester/production_plans.py`, `shot_kit.py`, `director_review.py`, `usage_calibration.py` | Autonomous production: plans, shot kits, roles and AI review, cost learning |
-| `subscription-tester/music_video/` | Music-video toolkit: beats, lyric fitting, speech sync, board audit, render; `/agent/v1/music-video` |
+| `subscription-tester/music_video/` | Music-video toolkit: song analysis, transcription and line times, board and gates, previz, keyframes, triage, Grok prompts, sound, look, review, render and release; `/agent/v1/music-video`, viewer at `/previz` |
 | `subscription-tester/*_studio.py`, `story_*.py`, `series_builder.py`, `world_workshop.py` | Story, series, image, production and editing features |
 | `subscription-tester/ui/`, `static/` | Browser UI (React/TypeScript sources and committed builds, plus plain scripts) |
 | `subscription-tester/tests/` | Offline Python and JavaScript suites |

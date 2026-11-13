@@ -19,6 +19,7 @@ Need to install the app? See [Setup](README.md).
 - [Organize and delete productions](#organize-and-delete-productions)
 - [Work with an agent](#work-with-an-agent)
 - [Let an agent produce for you](#let-an-agent-produce-for-you)
+- [Make a music video with an agent](#make-a-music-video-with-an-agent)
 - [Protect your work](#protect-your-work)
 - [Troubleshooting](#troubleshooting)
 
@@ -268,6 +269,25 @@ not count.
 
 To turn off the pause after every agent take, set `human_review_after_agent_video` to
 `false` in `studio-config.json`. Plans, kits and budgets still apply.
+
+## Make a music video with an agent
+
+Your agent can make a short music video where a character speaks the lyrics on camera and every cut lands on the
+song's bars. Grok Imagine Video lip-syncs speech, not singing, so the song's own vocal carries the sung lines.
+Audio Grok makes while trying to sing is never used. You make the song (for example in Suno), give the agent the
+song and its vocal and instrumental stems, and decide at each checkpoint:
+- the concept
+- the song, by ear
+- the downbeat
+- the character and set references
+- the stills batch and its cost
+- each still
+- the plan and its cost
+- every take
+- the first cut
+
+Open **`/previz`** in Studio to watch the free 3D stand-in video with your song before anything is generated. The
+agent follows the [music video guide](MUSIC_VIDEO_GUIDE.md).
 
 ## Protect your work
 

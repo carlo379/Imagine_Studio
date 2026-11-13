@@ -55,7 +55,9 @@ class MusicVideo:
         return dict(schema_version=1, modes={k: {f: v for f, v in m.items()} for k, m in modes.MODES.items()},
                     rules=['Audio generated while simulating singing is never used; only a spoken take contributes sound.',
                            'Visual-only shots generate no audio and their prompts must not ask the model to sing, speak or quote words.',
-                           'Takes are slipped by trimming their start (picture and sound together), never stretched.',
+                           'Spoken takes are only trimmed (picture and sound together), never retimed; visual-only takes are slowed only by explicit choice.',
+                           "A take's first two frames are never shown; the first shot starts at 0.",
+                           'No grade or grain until the human asks; color is made in the pictures.',
                            'Cuts land on bar lines; the downbeat phase is a guess until the director confirms it.'],
                     limits=dict(max_take_seconds=lyricmod.MAX_CLIP_S, shots_per_minute=[boardmod.TAKE_MIN_PER_MIN, boardmod.TAKE_MAX_PER_MIN]),
                     generation=False, routes=list(ROUTES))
@@ -1092,6 +1094,7 @@ class MusicVideo:
         if missing:
             raise APIError('takes_missing', 'Attach a take to every shot first: ' + ', '.join(missing[:8]), 409)
         placements, measured, entries = [], [], []
+        timed = {t['line']: t for t in (p.get('line_times') or []) if t.get('start') is not None}
         for s in shots:
             t = p['takes'][s['id']]
             _, path = self.media(t['source'], video=True)
@@ -1108,7 +1111,11 @@ class MusicVideo:
                 if w.get('ok'):
                     place.update(in_point=w['in_point_s'], speed=w['speed'])
             if s['kind'] == 'sung_cut':
-                entries.append(dict(text=s['text'], start=s['start'] + .1, end=min(s['end'], s['start'] + .1 + s['speech_s']), approximate=True))
+                sung = timed.get(s.get('line')) or ({'start': s['song_start'], 'end': s['song_end']} if s.get('song_start') is not None else None)
+                if sung:                                     # the song's own line times (aligned, refined on the stem)
+                    entries.append(dict(text=s['text'], start=sung['start'], end=sung['end'], approximate=False))
+                else:
+                    entries.append(dict(text=s['text'], start=s['start'] + .1, end=min(s['end'], s['start'] + .1 + s['speech_s']), approximate=True))
             placements.append(place)
         spans = modes.mute_spans(modes.speech_spans(shots, placements)) if p['mode'] == 'muted_spans' else []
         return placements, entries, spans
@@ -1156,7 +1163,7 @@ class MusicVideo:
         plan = dict(mode=p['mode'], placements=[{k: v for k, v in x.items() if k != 'clip'} for x in placements],
                     mute_spans=spans, lyric_gate=gate, sound=sound['plan'], grain=look['grain'],
                     flagged_in_use=flagged, slowed_shots=slowed, approximate_lyric_lines=sum(e['approximate'] for e in entries),
-                    notes=(['Lyric timing on song-carried lines is estimated from the slot, not aligned to the vocal.'] if any(e['approximate'] for e in entries) else [])
+                    notes=(['Some song-carried lines have no measured time, so their on-screen lyrics are estimated from the slot; align the lyrics to fix it.'] if any(e['approximate'] for e in entries) else [])
                     + ([f"Slowed below 1x (motion may step visibly): {', '.join(slowed)}. Prefer a cut-away, another take or a reshoot."] if slowed else []))
         if not execute:
             return plan
