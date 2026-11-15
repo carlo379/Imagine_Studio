@@ -1,7 +1,8 @@
 # Music video guide (speech-led, beat-locked)
 
-Make a one-minute music video where the character **speaks** the lyrics (Grok Imagine Video lip-syncs speech, not
-singing) and every cut lands on the song's bars. Modeled on the Claudia workflow: song first, lyric sheet, beat map,
+Make a one-minute music video where the character **speaks** the lyrics (Grok Imagine Video lip-syncs speech
+reliably; sung lip-sync works only with the extra steps in [Sung lip-sync](#sung-lip-sync-picture-only-outside-this-toolkit))
+and every cut lands on the song's bars. Modeled on the Claudia workflow: song first, lyric sheet, beat map,
 audited storyboard, measured takes, every word on screen, one local render. All routes live under
 `/agent/v1/music-video`, are local and free, and **never generate media**. Takes come from the normal production flow
 (shot kit, approved plan, human verdicts) and are attached here by reference.
@@ -245,7 +246,8 @@ stem's voiced edges (needs `stems.vocal`) and reports what moved. It clears the 
 first-frame form for shots still marked TODO. Each prompt says "as in the first frame", gives a second-by-second
 action from the keyframe moment, one camera line from the previz move, and "No on-screen text". A spoken shot gets
 its line quoted with commas instead of full stops (a full stop makes the take pause), a smile in the eyes and lips
-closed until the voice begins.
+closed until the voice begins. Commas keep a line continuous; when the line should have a pause, do not rely on
+punctuation at all: write the pause between quoted phrases, as in [Sung lip-sync](#sung-lip-sync-picture-only-outside-this-toolkit).
 
 `GET projects/{id}/prompts` lints every prompt for:
 - mood words the model obeys literally (deadpan, knowing, eyes on the lens)
@@ -286,6 +288,50 @@ ellipse, polygon or path with a `depth` for cast shadows, a fixed `palette`, `gr
 scripts, images or external links). It saves the plate as an image asset; with `use_as_set` it becomes the keyframe
 plan's set reference. Ask the image model to rebuild it as a real, physical set for every still, so the world stays
 one place.
+
+## Sung lip-sync (picture only, outside this toolkit)
+
+Tested live in November 2026 on a 65 s, 14-shot music video. The character mimes the song's own words, the take's
+audio is thrown away, and the real song plays under the picture. The toolkit's audit refuses a prompt that asks
+anyone to sing, so these shots go through Studio's normal production flow (shot kit, approved plan, one take at a
+time, review and verdict), not through `music-video/.../takes`. Grok's singing voice never reaches the cut.
+
+**Prompt the sung words with measured pauses.**
+- Measure the pauses on the vocal stem (silence detection plus word times from the transcriber). Do not guess them,
+  and write only the pauses you can hear: a breath written into a continuous phrase makes the mouth stop.
+- Put the words in double quotes after a plain lead-in, with the pauses between the quoted phrases:
+
+  ```text
+  She sings this sequence aloud
+  "Hush now", pause for 1/2 second, "little model go to sleep"
+  holding the word "sleep" softly to the end of the shot. No subtitles, only sung words.
+  ```
+
+- Use no colon before the sequence and no commas inside a quoted phrase. Both shifted the timing and brought on
+  burned-in captions.
+- Put **"No subtitles, only sung words."** straight after the sequence. Quoted words otherwise come back as on-screen
+  subtitles. Also open the prompt with a no-text sentence and repeat it in the restrictions block.
+- Describe the lips and chin moving with every sung word, and the face silent and still during the pauses. Keep the
+  camera locked off and the subject still.
+- Audio block: only the character's soft sung voice singing the words above, with the silent pauses. No music, no
+  other voices.
+
+**Expect timing drift, and fix it in the edit.** Even with measured pauses, phrases drift 0.2–0.5 s. Place each take
+so its first syllable lands on the vocal, skip its first two frames, then repair the rest in an editor:
+- cut a few frames (6–11) at a pause to bring the next phrase in sooner;
+- repeat a short section to hold a mouth shape;
+- speed up a tail to catch up;
+- mix two takes of the same shot;
+- hide every join with a short morph transition (DaVinci Resolve's Smooth Cut, about 12 frames).
+
+Small jumps on a still, locked-off subject hide best. Generate takes a little longer than the slot to leave room, and
+keep the originals.
+
+**Shots Grok could not make.** Mechanisms failed in six takes: a drum turning while pins pluck tines, and a winding
+key turning. A staged 3D render, several timed keyframes and an edited last frame did not fix them. Small motions,
+such as wings, were often ignored. Design the story so it does not depend on mechanical motion. When a mechanism
+fails twice, simplify the shot (a still object, light, a slow push) rather than retrying. Write every action in
+detail: whatever the prompt leaves out, the model decides.
 
 ## For humans in the browser
 

@@ -317,11 +317,12 @@ class ImageStudio:
         if not self.app.mock:
             if provider=='openai' and not openai_images.api_key(): raise APIError('api_key_required','Configure OPENAI_API_KEY on the server for Image 2.5.',403)
             if provider=='codex' and not self.account_status()['subscription']['signed_in']: raise APIError('sign_in_required','Sign in with ChatGPT in Codex, then refresh OpenAI connection.',403)
+        provenance=self.review_provenance(record)
         with self.app.lock:
             if self.app.state['phase'] in ('connecting','waiting','generating','pending'): raise APIError('busy','Wait for the current image or video operation.',409)
             if provider=='grok' and not self.app.state['signed_in']: raise APIError('sign_in_required','Sign in with Grok before generating.',403)
             job=dict(id=uuid.uuid4().hex,created_at=time.time(),mock=self.app.mock,draft=copy.deepcopy(record),endpoint=endpoint,
-                     expanded_prompt=body['prompt'],prompt_review_provenance=self.review_provenance(record),source_count=count,provider=provider,model=body['model'],requested_model=body['model'],returned_model=None,model_identity='unconfirmed',deferred=provider=='grok',request_id=None,recoverable=False,billing=IMAGE_MODELS[body['model']]['billing'],status='pending',message='Creating image…',outputs=[],key=key,fingerprint=fingerprint)
+                     expanded_prompt=body['prompt'],prompt_review_provenance=provenance,source_count=count,provider=provider,model=body['model'],requested_model=body['model'],returned_model=None,model_identity='unconfirmed',deferred=provider=='grok',request_id=None,recoverable=False,billing=IMAGE_MODELS[body['model']]['billing'],status='pending',message='Creating image…',outputs=[],key=key,fingerprint=fingerprint)
             self.db['jobs'].insert(0,job);self.persist()
             self.app.state.update(phase='generating',message='Generating a mock image…' if self.app.mock else 'Generating image. No automatic retry will be made.')
         self.app.spawn(self.worker,job,endpoint,body)
