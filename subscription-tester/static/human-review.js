@@ -1,22 +1,37 @@
-// Human review pause: an agent-started video waits here until a person gives a verdict.
+// Human review: an agent-started video waits here for a verdict, unless the person approves the next take.
 // The same verdict can arrive through the Agent API when the human works only through an agent.
 (function(){
   const TAGS=[['bad_anatomy','Bad hands / face'],['off_model','Off-model'],['wrong_action','Wrong action'],
               ['flat_acting','Flat acting'],['continuity','Continuity'],['great','Great']];
   const box=()=>document.getElementById('humanReview');
-  let current=null;
+  let current=null,earlier=[];
+  const shotOf=j=>((j.settings||{})._studio_video_id)||((j.agent_scene||{}).id)||null;
+  function renderEarlier(el,job){
+    // "Keep an earlier take instead": the human prefers a take judged before this one.
+    let row=el.querySelector('[data-hr-earlier]');
+    if(!row){row=document.createElement('p');row.dataset.hrEarlier='';row.className='hint';
+      const label=document.createElement('label');label.textContent='Keep an earlier take instead: ';
+      const select=document.createElement('select');select.dataset.hrEarlierSelect='';label.append(select);
+      const button=document.createElement('button');button.type='button';button.className='text-button';button.textContent='Keep that take';
+      button.onclick=()=>{const id=select.value;if(id)submit('reject',id);};
+      row.append(label,' ',button);el.append(row);}
+    const select=row.querySelector('select'),options=earlier.map((j,i)=>{const o=document.createElement('option');o.value=j.id;
+      o.textContent=`Take ${i+1} (${new Date((j.created_at||0)*1000).toLocaleString()}, ${(j.human_review||{}).verdict||'not judged'})`;return o;});
+    select.replaceChildren(...options);row.hidden=!earlier.length;
+  }
   function render(job){
     const el=box();if(!el)return;
     if(!job){current=null;el.hidden=true;return;}
     const changed=!current||current.id!==job.id;current=job;
     const failed=job.status!=='done';
     el.querySelector('[data-hr-text]').textContent=failed
-      ?'The agent is paused: its last video generation failed. Read the error, then record your verdict.'
-      :'The agent is paused until you review its latest video.';
+      ?'The agent\'s last video generation failed. Read the error, then record your verdict (or approve its next take in chat).'
+      :'Review the agent\'s latest video. It waits for this verdict unless you approve its next take in chat.';
     el.querySelector('[data-hr-error]').textContent=failed?(job.message||''):'';
     el.querySelector('[data-hr-show]').hidden=failed||!job.video;
     el.querySelector('[data-verdict="keep"]').disabled=failed;
     renderAI(el.querySelector('[data-hr-ai]'),job);
+    renderEarlier(el,job);
     if(changed){el.querySelector('[data-hr-notes]').value='';el.querySelector('[data-hr-usage]').value='';
       el.querySelectorAll('[data-hr-tag]').forEach(t=>t.setAttribute('aria-pressed','false'));}
     el.hidden=false;
@@ -44,21 +59,25 @@
     try{
       const response=await fetch('/api/history');if(!response.ok)return;
       const jobs=await response.json();
-      render(jobs.find(j=>(j.human_review||{}).status==='pending')||null);
+      const pending=jobs.find(j=>(j.human_review||{}).status==='pending')||null;
+      earlier=pending&&shotOf(pending)?jobs.filter(j=>j.id!==pending.id&&shotOf(j)===shotOf(pending)&&j.status==='done'&&j.video&&(j.human_review||{}).status==='reviewed')
+        .sort((a,b)=>(a.created_at||0)-(b.created_at||0)):[];
+      render(pending);
     }catch(_){/* the server may be restarting; try again on the next tick */}
   }
-  async function submit(verdict){
+  async function submit(verdict,keepId){
     if(!current)return;
     const el=box(),notes=el.querySelector('[data-hr-notes]').value.trim(),usageText=el.querySelector('[data-hr-usage]').value.trim();
-    if(verdict!=='keep'&&!notes){toast?.(verdict==='retry'?'Say what to fix in the notes.':'Say why the shot does not work in the notes.');el.querySelector('[data-hr-notes]').focus();return;}
+    if(verdict!=='keep'&&!notes&&!keepId){toast?.(verdict==='retry'?'Say what to fix in the notes.':'Say why the shot does not work in the notes.');el.querySelector('[data-hr-notes]').focus();return;}
     const body={id:current.id,verdict,notes,tags:[...el.querySelectorAll('[data-hr-tag][aria-pressed="true"]')].map(t=>t.dataset.hrTag)};
     if(usageText)body.usage_after_percent=Number(usageText);
+    if(keepId)body.keep_job_id=keepId;
     const buttons=el.querySelectorAll('[data-verdict]');buttons.forEach(b=>b.disabled=true);
     try{
       const response=await fetch('/api/video/human-review',{method:'POST',headers:{'Content-Type':'application/json','X-Tester':'local'},body:JSON.stringify(body)});
       const payload=await response.json();
       if(!response.ok)throw new Error(payload.error||'Could not record the review.');
-      toast?.({keep:'Kept. The agent may continue.',retry:'Retry noted. The agent may make one more take.',reject:'Rejected. The agent must rethink this shot.'}[verdict]);
+      if(keepId)toast?.('Kept the earlier take. The agent may continue.');else toast?.({keep:'Kept. The agent may continue.',retry:'Retry noted. The agent may make one more take.',reject:'Rejected. The agent must rethink this shot.'}[verdict]);
       current=null;await refresh();
     }catch(error){toast?.(error.message);}
     finally{buttons.forEach(b=>b.disabled=false);if(current)render(current);}

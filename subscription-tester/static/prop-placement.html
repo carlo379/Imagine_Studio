@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prop placement · Imagine Studio</title>
+<style>
+  :root { --bg:#14151a; --panel:#1d1f26; --line:#2e313b; --text:#e9eaee; --muted:#9a9eab; --ok:#3cc85a; --bad:#eb3228; --accent:#7aa7ff; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.45 system-ui, -apple-system, sans-serif; }
+  header { padding:16px 20px; border-bottom:1px solid var(--line); }
+  h1 { font-size:18px; margin:0 0 4px; }
+  header p { margin:0; color:var(--muted); max-width:900px; }
+  main { display:grid; grid-template-columns:minmax(0,1fr) 340px; gap:16px; padding:16px 20px; }
+  @media (max-width: 900px) { main { grid-template-columns:1fr; } }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px; }
+  h2 { font-size:15px; margin:0 0 10px; }
+  label { display:block; color:var(--muted); font-size:13px; margin:8px 0 4px; }
+  input, select { width:100%; background:#111217; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:7px 8px; font:inherit; }
+  button { background:var(--accent); color:#0c1020; border:0; border-radius:6px; padding:8px 12px; font-weight:600; cursor:pointer; }
+  button.secondary { background:#2b2f3a; color:var(--text); }
+  button:disabled { opacity:.5; cursor:default; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:10px; }
+  table { width:100%; border-collapse:collapse; margin-top:10px; font-size:13px; }
+  th, td { text-align:left; padding:5px 6px; border-bottom:1px solid var(--line); vertical-align:top; }
+  .ok { color:var(--ok); } .bad { color:var(--bad); }
+  .verdict { font-size:20px; font-weight:700; }
+  .muted { color:var(--muted); font-size:13px; }
+  .error { color:var(--bad); }
+  img { width:100%; border-radius:6px; margin-top:10px; }
+  .list button { width:100%; text-align:left; background:#23262f; color:var(--text); margin-bottom:6px; font-weight:400; }
+  textarea { width:100%; background:#111217; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:7px 8px; font:13px ui-monospace, monospace; }
+  section + section { margin-top:16px; }
+  audio { width:100%; margin-top:6px; }
+  nav a { color:var(--accent); margin-right:12px; font-size:13px; }
+</style>
+</head>
+<body>
+<header>
+  <nav><a href="/">Studio</a><a href="/continuity">Continuity</a><a href="/delivery">Delivery check</a><a href="/sound">Sound</a><a href="/prop-placement">Prop placement</a></nav>
+  <h1>Prop placement</h1>
+  <p>Put a real product into a still at its true size: a GPT edit with the product render as a separate reference, then a Grok “reproduce exactly”.
+  Render the product first with the prop model tool, at the size, position and angle it should have in the frame.</p>
+</header>
+<main>
+  <div>
+    <section>
+      <h2>New run</h2>
+      <label for="ppTitle">Title</label><input id="ppTitle" placeholder="Shot 3 ranch dish">
+      <label for="ppBase">Base still (asset ID): the draft with the wrong object</label><input id="ppBase">
+      <label for="ppRef">Reference (asset ID): the prop render, or an approved still with the product placed right</label><input id="ppRef">
+      <label for="ppTarget">What to replace</label><input id="ppTarget" placeholder="the wrong dish on the barn roof">
+      <label for="ppProduct">Product</label><input id="ppProduct" placeholder="satellite dish">
+      <label for="ppKeep">Also keep (optional)</label><input id="ppKeep">
+      <div class="row"><label style="margin:0"><input type="checkbox" id="ppApprove" style="width:auto"> I approve these two image generations</label></div>
+      <div class="row"><button id="ppStart">Start</button><span class="muted" id="ppStatus"></span></div>
+    </section>
+    <section id="ppRun" hidden>
+      <h2 id="ppRunTitle"></h2>
+      <div id="ppSteps" class="muted"></div>
+      <div class="row"><button class="secondary" id="ppAdvance">Check progress</button></div>
+      <div id="ppImages"></div>
+    </section>
+  </div>
+  <section class="list"><h2>Runs</h2><div id="ppList" class="muted">Loading…</div></section>
+</main>
+<script src="/static/prop-placement.js"></script>
+</body>
+</html>

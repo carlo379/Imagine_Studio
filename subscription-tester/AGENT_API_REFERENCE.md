@@ -19,6 +19,7 @@ limits through `schema`; use `openapi.json` for the machine-readable contract.
 - [Browser collaboration and shared drafts](#browser-collaboration-and-shared-drafts)
 - [Efficient reads](#efficient-reads)
 - [Autonomous production](#autonomous-production)
+- [Sound, delivery and Resolve](#sound-delivery-and-resolve)
 
 ## Connection and core requests
 
@@ -84,14 +85,14 @@ Paths below are relative to `/agent/v1`.
 | GET / PUT | `/references/{id}` | Fetch / replace a record’s complete editable details |
 | POST | `/references/{id}/archive` | Archive/restore with `{archived: true/false}` |
 | GET / POST | `/scenes` | List records / create `{title?, scene?, named_references?}` |
-| GET / PUT / PATCH | `/scenes/{id}` | Fetch / replace scene / edit selected fields |
+| GET / PUT / PATCH | `/scenes/{id}` | Fetch / replace scene / edit selected fields: PATCH takes `expected_revision`, `changes` (scene fields), `title` and the named-reference lists; any other top-level field is refused (400 `invalid_scene`) without changing the revision |
 | POST | `/scenes/{id}/validate` | Return errors or exact expanded provider request; body `{}` |
 | POST | `/scenes/{id}/archive` | Archive/restore with `{expected_revision, archived}` |
-| POST | `/scenes/{id}/generate` | Submit `{expected_revision, approved: true}` with Idempotency-Key |
+| POST | `/scenes/{id}/generate` | Submit `{expected_revision, approved: true, human_words}` with Idempotency-Key; see [Generation fields](#generation-fields) |
 | GET / POST | `/workspace` | Read current browser scene / select `{scene_id}` |
 | GET | `/jobs` | List current-mode video history |
 | GET | `/jobs/{id}` | Read a job’s state, output, error and current progress if available |
-| POST | `/jobs/{id}/resume` | Poll an existing unfinished live request; body `{}` |
+| POST | `/jobs/{id}/resume` | Poll an existing unfinished live request; body `{}`. The job returns to `pending` at once and `resume_count` increments, so pollers wait for the resumed attempt |
 | GET | `/jobs/{id}/download` | Download/cache a completed video |
 | POST | `/jobs/{id}/reuse` | Create a new scene from the saved settings; optional `{title}` |
 | POST | `/image-test` | Local mock diagnostic or existing request replay; new live images use Image Studio with AI preparation or current manual prompt review |
@@ -191,10 +192,10 @@ A handle must be unique, ignoring capitalization, including archived records. Fo
 After applying a current guide-backed preparation and obtaining approval for this exact scene and revision:
 
 ```python
-# Set approved=True only after obtaining human authorization.
-job = client.generate(scene, approved=True,
+# Set approved=True only after obtaining human authorization; relay their words verbatim.
+job = client.generate(scene, approved=True, human_words="Yes, generate the intro.",
                       idempotency_key="foundation-intro-approved-001")
-result = client.wait_for_job(job["id"])
+result = client.wait_for_job(job["id"])  # after client.resume_job(id), waits for the resumed attempt
 if result["status"] == "done":
     client.download(job["id"], "/absolute/path/SampleHero-intro.mp4")
 else:
@@ -393,6 +394,39 @@ The human UI no longer shows a usage checkbox for subscription operations; click
 
 Script import preview now returns `sections` with `type` (`scene`, `notes`, `other`), title and text; `scenes` remains for compatibility. Review and POST `/agent/v1/stories/episodes/{id}/apply-import` with `expected_revision` and `sections`. Scene sections replace the scene list (unique matching titles retain IDs); supporting sections append labeled text to episode notes. With no scenes, existing scenes stay. Invalid types, notes limits or stale revisions reject the import atomically.
 
+### Prop models and posed renders
+
+Use this when an image model keeps drawing a real product at the wrong size, shape or angle. Upload the product's official 3D model once, render it exactly where it belongs in the frame, and give that render to the image model as a reference. No provider call is made.
+
+- `GET /prop-models/schema` lists formats (`stl`, `obj`), units, engines and whether each is installed, and every pose field.
+- `POST /prop-models` with `name`, `format`, `data_base64` (up to 64 MB), optional `units` (`mm` default, `cm`, `m`, `in`), `up_axis` (`z` default or `y`) and `reference_id` (a named Prop reference). The response gives the model's true size in meters (`size_m`).
+- `GET /prop-models` and `GET /prop-models/{id}` read them back.
+- `POST /prop-models/{id}/render` places the model in front of a pinhole camera at the origin looking down -Z with +Y up, and saves a PNG image asset. Pose fields:
+  - `width`, `height`: pixels (default 1920 × 1080). Match the still's aspect ratio.
+  - `hfov_deg` (default 60) or `lens_mm` (full-frame equivalent).
+  - `frame_x`, `frame_y`: where the model's center lands (0–1 from the left and top).
+  - `distance_m`: camera to model center. With `scale` at 1 the model keeps its true size, so distance sets its size in the frame.
+  - `yaw_deg` (about the vertical), `pitch_deg` (positive tips the top away from the camera) and `roll_deg`.
+  - `engine`: `vtk` (fast, flat light; `pip install vtk`) or `blender` (soft light; set `IMAGINE_BLENDER` if Blender is not on `PATH` or in `/Applications`).
+  - `light` (Blender): `key_color`, `ambient_color` (RGB 0–1), `key_strength`, `ambient_strength`, `key_direction` (toward the light, camera coordinates) and `exposure`, to match the scene's light.
+  - `ground_shadow` (Blender, Cycles, about 25 s): a soft shadow on an invisible ground under the model, so a composite sits on the ground.
+  - `background`: `transparent` (default), `gray`, `dark`, or `{"asset_id": ...}` to place the render over an image with the same aspect ratio. Use that last one to check placement against a draft, or to make a layout image for an image model: an image model copies a layout image far more faithfully than it follows a separate product reference.
+
+The asset records `kind: "prop_model_render"`, the model, engine, camera, pose, true size and the model's bounding box in pixels. **Renders are image-model references only.** Studio refuses them as a video `image`, `last_frame`, keyframe or reference image. Engines run as separate processes with no network access and write only to a temporary folder. The SDK has `upload_prop_model(path, units=...)` and `render_prop(model_id, **pose)`.
+
+### Continuity check between a first and last frame
+
+`POST /image-studio/continuity` compares two frames for fixed objects that moved or changed: `first` and `last` (`{"asset_id": ...}`), optional `regions` (up to 24 `{"name", "box": [x0, y0, x1, y1]}` as fractions of the frame), optional `tolerance_percent` (default 0.5% of the width) and `title`. Each region (and each tile of a 16 × 9 grid) is found in the last frame and reported as `held`, `moved`, `changed` or `flat`, with its shift in pixels and a match score. With regions, `verdict` is `pass` when every region held, otherwise `fail`; without regions it is `pass`, `review` or `fail`. `images` holds the asset IDs of a map, an overlay and a difference image, marked `continuity_check` and refused as video inputs. `GET /image-studio/continuity` lists checks; `GET /image-studio/continuity/{id}` reads one; `POST /image-studio/continuity/{id}/accept` with the human's verbatim `human_words` accepts one that did not pass. Set a shot kit's `continuity_check_id` to a passed or accepted check of the scene's exact first and last frames to satisfy the "last frame consistent with the first frame" check. The browser page is `/continuity`. No provider call.
+
+**Size test.** Each named region is also measured for size: `scale_percent` is the size at which its content best matches the last frame (85–115% searched, to 0.1%). A region off by more than `scale_tolerance_percent` (default 0.5) is `resized` and fails the check. Draw each box around the whole object, edges included: a flat area inside an object cannot show its size. This catches an edit that shrank a fixed object (on a recent ad, a laptop about 9% smaller passed the shift-only check).
+
+**Lock fixed objects.** `POST /image-studio/continuity/lock` with `first`, `last`, `regions` (boxes, or `{"name", "polygon": [[x, y], ...]}` outlines, as fractions) and optional `feather_px` (default 12) and `name` saves a new last frame whose fixed objects are the first frame's own pixels, copied with a soft edge. Then run a Grok edit of it with "Reproduce the input image exactly. Change nothing." to blend the copied areas, check it again and show the human. The browser page has **Copy fixed objects into last frame**. No provider call.
+
+### Prop placement in two image steps
+
+`POST /image-studio/prop-placement` puts a real product into a still at its true size: `title`, `base` (the draft still, `{"asset_id"}`), `reference` (the prop render or an approved still with the product placed right), `target` (what to replace, e.g. "the wrong dish on the barn roof"), `product`, optional `keep` and `ratio`, and `approved: true` (it covers the run's two image generations). Step 1 is a GPT Image edit of the base with the reference as a separate image; step 2 is a Grok "reproduce exactly" of step 1's image. `POST /image-studio/prop-placement/{id}/advance` starts step 2 when step 1's image is ready and records the result; it never retries a failed step. `GET /image-studio/prop-placement` and `GET .../{id}` read runs. `true_ratio` is the product's width-to-height in the render, to measure the result against. The browser page is `/prop-placement`.
+
+A size request in an image edit ("20% smaller", "make the dish shorter") no longer gets the "preserve proportions" and "subject scale" lines that fought it.
 
 ## Stories, productions and shot planning
 
@@ -1546,15 +1580,29 @@ keyframe counts only when its slot is strictly inside the take (0 < slot < durat
 | `plans/{id}/close` | POST | `{expected_revision}` |
 
 Item states: `not_started`, `in_progress`, `awaiting_review`, `retry`, `rejected`, `kept`,
-`takes_used_up`. Changes to items or budget clear the approval; title and notes do not.
+`takes_used_up`. Changes to items or budget clear the approval; title and notes do not, and
+scene edits never do. Plan approval is optional when each take is approved with `human_words`.
 
 ### Generation fields
 
 `POST scenes/{id}/generate` accepts, besides `expected_revision` and the Idempotency-Key:
-`approved: true` **or** `plan_id`; `agent {model, session_id, product?}`;
-`usage_before_percent` (0–100) or `usage_reading_unavailable: true`; and
-`allow_unapproved_start_frame`. The job records `plan`, `agent_identity`, `usage`, `kit`
-and, once finished, `human_review: {status: "pending"}`.
+`approved: true` **or** `plan_id`; `human_words` (with `approved: true`: the human's own
+approval of this take, verbatim, 1–2,000 characters); `verdict {job_id, verdict, human_words?,
+notes?, tags?, usage_after_percent?}` (with `human_words`: the verdict on the previous take,
+recorded first; its `human_words` defaults to the top-level ones); `agent {model, session_id,
+product?}`; optional `usage_before_percent` (0–100) or `usage_reading_unavailable: true`; and
+`allow_unapproved_start_frame`. The job records `take_approval`, `plan` (with `warnings` when
+a per-take approval covered a plan limit), `agent_identity`, `usage`, `kit` and, once
+finished, `human_review: {status: "pending"}`.
+
+`approved: true` with `human_words` is the single human stop. It covers the attached frames
+(start frame approval), a plan that is unapproved or changed since and its take and budget
+limits, the review pause and the rejected-shot rule. Without `human_words` those rules refuse.
+Usage readings and the AI review never block.
+
+| Route | Method | Body / result |
+| --- | --- | --- |
+| `assets/{id}/approve` | POST | `{approved?: true, human_words}`: approve (or revoke) any image asset, such as an uploaded or locally edited frame; records `approval {source, approved_at, human_words}`. Browser: `POST /api/assets/{id}/approve` with `{approved}` |
 
 ### Review and verdicts
 
@@ -1562,8 +1610,8 @@ and, once finished, `human_review: {status: "pending"}`.
 | --- | --- | --- |
 | `jobs/{id}/review-packet` | GET | `{brief, story, references[], frames[{index,time_s,url}], contact_sheet_url, human_taste[], past_disagreements[], required_reviewer, director, submit}` |
 | `jobs/{id}/review-frames/{name}` | GET | `frame-00.jpg` … `frame-11.jpg` or `contact-sheet.jpg` (image/jpeg) |
-| `jobs/{id}/ai-review` | POST | `{reviewer{model, session_id, product?}, scores{story, identity, craft, performance}, issues[{severity, category, time_s?, problem, fix}], frames_examined, summary}` or `{unavailable: true, reason}`; one per take |
-| `jobs/{id}/human-review` | POST | `{verdict: keep|retry|reject, human_words, notes?, tags?, usage_after_percent? | usage_reading_unavailable?}` |
+| `jobs/{id}/ai-review` | POST | Optional. `{reviewer{model, session_id, product?}, scores{story, identity, craft, performance}, issues[{severity, category, time_s?, problem, fix}], frames_examined, summary}` or `{unavailable: true, reason}`; one per take, before or after the verdict |
+| `jobs/{id}/human-review` | POST | `{verdict: keep|retry|reject, human_words, notes?, tags?, usage_after_percent? | usage_reading_unavailable?}`; needs no AI review or usage reading |
 | `jobs/{id}/usage` | POST | `{usage_after_percent}` when it was not given with the verdict |
 | `human-reviews` | GET | Every verdict, newest first, with prompt, settings, tags, notes, human words and readings |
 | `reviewer/agreement` | GET | `{compared, agreed, agreement_rate, ai_stricter, ai_looser, by_reviewer_model, recent_disagreements[]}` |
@@ -1573,3 +1621,21 @@ Issue categories: `story`, `identity`, `continuity`, `anatomy`, `craft`, `camera
 `performance`, `audio`, `other`. Studio computes `ai_review.suggestion`: story < 5 → reject;
 a blocking issue or any score < 6 → retry; otherwise keep. Tags: `bad_anatomy`, `off_model`,
 `wrong_action`, `flat_acting`, `continuity`, `great`.
+
+## Sound, delivery and Resolve
+
+The full workflow is in the [sound and delivery guide](SOUND_AND_DELIVERY_GUIDE.md). Routes (all local, no provider call except generating a voice-line take):
+
+| Route | What it does |
+| --- | --- |
+| `GET sound/presets` | Device presets, voice-line defaults and how to describe a Lite voice |
+| `POST sound/voice-lines` | A scene for spoken lines only: Lite at 480p, sound on, lines quoted with times, no music or subtitles |
+| `POST sound/stems`, `GET sound/stems`, `GET sound/stems/{id}`, `GET sound/stems/{id}/audio.wav` | Save a take's sound (`job_id`) or a local file (`path`) as a 48 kHz WAV stem with word times |
+| `POST sound/place` | A full-length stem from pieces placed at timeline times, with `device` (`clean`, `radio`, `tablet`, `tv`, `laptop`, `phone`), `gain_db`, `stretch_to_s` |
+| `POST sound/music-fit` | Slides of a whole song that land an onset (or `song_event_s`) on the picture hit at `hit_s` |
+| `POST sound/music` | The song slid by `offset_s`, trimmed to `length_s`, with volume `keyframes` (`at_s`, `db`) |
+| `GET delivery/presets`, `POST delivery/checks`, `GET delivery/checks/{id}` | Check a finished local file against `contest_30s_1080p`, `x`, `youtube` or a custom `spec` |
+| `POST delivery/checks/{id}/fix` | A copy with the picture untouched and the sound re-encoded to the exact length, format and loudness |
+| `POST resolve/exports`, `GET resolve/exports/{id}/timeline.fcpxml`, `GET resolve/exports/{id}/add-sound.lua` | FCPXML of the cut with stems on named tracks, and a Lua script that adds the stems to the timeline open in Resolve |
+
+Server code status: `GET /` and `GET schema` include `code` (`running`, `on_disk`, `stale`, `message`).

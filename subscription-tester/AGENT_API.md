@@ -140,9 +140,12 @@ if result["status"] == "done":
 If validation fails or settings change, fix them and obtain authorization for the
 updated revision. A local polling timeout is not permission to generate again.
 
-This single-take example still pauses for the human's verdict when it finishes (see
-[Human review pause and verdicts](#human-review-pause-and-verdicts)). For a multi-shot
-episode, use a production plan instead: [Autonomous production](#autonomous-production).
+Send the human's own approval with it, verbatim, as `human_words`
+(`client.generate(record, approved=True, human_words="Go ahead.", idempotency_key=...)`):
+that one approval is the **only human stop** per take. It covers the attached frames, any
+plan limits and the review pause, and can carry the verdict on the previous take
+(`verdict`). See [One approval per take](#one-approval-per-take) and
+[Autonomous production](#autonomous-production).
 
 ## Image workflow
 
@@ -189,9 +192,30 @@ generating. In short:
 1. Respect the human's **director and reviewer models** (`GET roles`).
 2. Build a **shot kit** for every shot: 3D staging, approved first frame, last frame for
    end-state shots, middle keyframe for complex action.
-3. Get one **production plan** approved; generate under it with `plan_id`.
-4. Ask for **Grok usage readings** before and after each take while costs are learned.
-5. After every take, run an **independent AI review** and relay the **human's verdict**.
+3. Before each take, ask the human to approve it and send `approved: true` with their
+   `human_words` (and their verdict on the previous take as `verdict`, in the same call).
+   This is the one human stop; a **production plan** is optional bookkeeping.
+4. **Grok usage readings** before and after a take are optional; they improve estimates.
+5. An **independent AI review** is optional; the **human's verdict** is what counts.
+
+### One approval per take
+
+`POST scenes/{id}/generate` with `approved: true` and `human_words` (the human's own
+approval of this take, verbatim) is enough to generate. It also:
+
+- covers the frames attached to the scene: an uploaded or locally edited start frame needs
+  no separate approval (it must still be named and attached);
+- counts the take in a plan given as `plan_id` without needing the plan approved, and turns
+  scene changes, take limits and the budget into `plan.warnings` on the job;
+- lifts the review pause and the rejected-shot rule for this take;
+- records an optional `verdict` (`{job_id, verdict, notes?, tags?, human_words?}`) on the
+  previous take first, so the verdict and the next approval arrive in one step.
+
+The job records `take_approval: {human_words, approved_at, source}`. To approve an image on
+its own, relay the human's words with `POST assets/{id}/approve`
+(`{"approved": true, "human_words": "..."}`, or `client.approve_asset(id, words)`); in the
+browser, **Approve start frame** sits beside the request. `approved: true` without
+`human_words`, and `plan_id` alone, keep the stricter rules described below.
 
 ### Director and reviewer models, and independent AI review
 
@@ -219,8 +243,8 @@ The human chooses which model **directs** (runs Studio, writes prompts) and whic
   any blocking issue or any score below 6 → retry; otherwise keep.
 - If the reviewer cannot run (for example, its usage limit), submit
   `{"unavailable": true, "reason": "..."}`. Never invent a review.
-- Show the human the suggestion and issues with the take. When a reviewer model is
-  chosen, a relayed verdict waits for the AI review (409 `ai_review_required`).
+- Show the human the suggestion and issues with the take. The review is optional: a
+  relayed verdict never waits for it, and a review sent later still counts toward agreement.
 - `GET reviewer/agreement` reports how often the suggestion matched the human, by
   reviewer model. Each new packet includes recent disagreements in the human's words,
   so the reviewer learns this person's taste.
@@ -276,10 +300,11 @@ every shot's kit is ready** (409 `shot_kit_incomplete`). Each take records what 
 held; `GET kit/stats` shows the human's keep rate by kit completeness, so you can see
 whether it pays off.
 
-### Production plans: approve once, then generate
+### Production plans: optional shot list, budget and autonomous runs
 
-Instead of asking for `approved: true` on every take, propose a **plan** and have the
-human approve it once. A plan lists the shots (saved scenes), how many takes each may use
+A plan is optional. With [one approval per take](#one-approval-per-take) it is the shot list
+and cost tracker: pass `plan_id` and the plan needs no approval of its own. Approve a plan
+only when the human wants takes made **without** asking before each one. A plan lists the shots (saved scenes), how many takes each may use
 (default 2, at most 5) and an optional budget: a cap on total takes and on Grok usage
 percent. `GET plans/{id}` shows its estimate from learned costs ("expected", one take per
 shot, and "worst case", every allowed take), the usage spent so far and each shot's state.
@@ -299,20 +324,22 @@ job = client.request(f"scenes/{s1}/generate", "POST",
 ```
 
 The human can also approve or close the plan in Studio's **Production plans** panel.
-Under an approved plan, `plan_id` replaces `approved: true`. Everything else still applies:
-the review pause after every take, usage readings while costs are being learned, and the
-rejected-shot rule. Verdicts drive each shot:
+Under an approved plan, `plan_id` alone replaces `approved: true`, and the review pause and
+the rejected-shot rule apply. Verdicts drive each shot under plan-only generation:
 
 - **keep:** the shot is finished; more takes return 409 `plan_item_done`.
 - **retry:** apply the note. The human's retry authorizes one more take, even with a changed scene.
 - **reject:** rethink the shot, then show the human the changed shot and relay their approval
-  of the plan again. A changed shot without a retry verdict returns 409 `plan_scene_changed`.
+  of that take. A changed shot without a retry verdict returns 409 `plan_scene_changed` to
+  plan-only generation; editing a scene never clears the plan's approval.
 
-Generation under a plan is refused with `plan_not_approved` (never approved, or the plan
+Plan-only generation (no `human_words`) is refused with `plan_not_approved` (never approved, or the plan
 changed since), `not_in_plan`, `plan_takes_exhausted` (the shot's takes since the latest
 approval are used up), `plan_budget_exceeded` (total takes, or the usage cap given learned
 costs and readings) or `plan_closed`. **Any change to the shots, takes or budget clears the
-approval**; a title or notes change does not. When a limit is reached, stop and ask the human.
+approval**; a title or notes change does not. When a limit is reached, ask the human to
+approve the next take. With a per-take approval only `not_in_plan`, `plan_item_done` and
+`plan_closed` refuse.
 
 ### Learning what a take costs (Grok usage readings)
 
@@ -322,33 +349,34 @@ take. `GET usage/calibration` shows, for 480p, 720p and 1080p, the learned **% p
 of video**, estimates for 3, 5, 10 and 15 seconds, the samples behind them, and whether
 readings are still needed.
 
-While a resolution is not yet established, **ask the human before every generation**:
+Readings are **optional and never block**. When the human offers them:
 
-1. "What does Grok Settings → Usage show right now?" Send their number as
-   `usage_before_percent` with `POST scenes/{id}/generate`. Without it, Studio
-   answers 409 `usage_reading_required`.
-2. When the take finishes, show it and ask for the verdict **and** the Usage % again.
-   Send it as `usage_after_percent` with the verdict (`POST jobs/{id}/human-review`),
-   or later with `POST jobs/{id}/usage`.
+1. Send the Usage % read just before a take as `usage_before_percent` with
+   `POST scenes/{id}/generate`.
+2. Send the Usage % read after it as `usage_after_percent` with the verdict
+   (`POST jobs/{id}/human-review`, or the `verdict` on the next generate), or later with
+   `POST jobs/{id}/usage`.
 
 If the human cannot read Usage, send `usage_reading_unavailable: true` instead; that take
 does not count. A resolution is established after 3 clean samples that agree within 50%
 of their median, or after 6 clean samples (the median is used). A sample is discarded
 when the meter went down (a weekly reset) or another generation ran between the two
 readings, so ask for readings with no other Grok work in between. Mock takes never count.
-Once a resolution is established, readings for it are optional; use its estimate to plan.
+Once a resolution is established, use its estimate to plan.
 
 ### Human review pause and verdicts
 
 After every agent-started video generation finishes, successful or failed, the job
-records `human_review: {status: "pending"}`. Studio refuses the next agent generation
-with **409 `human_review_required`** until a person gives a verdict. A verdict is one of:
+records `human_review: {status: "pending"}`. A generation **without** a take approval
+(`approved: true` alone, or `plan_id` alone) is refused with **409 `human_review_required`**
+until a person gives a verdict; a generation with `approved: true` and `human_words` is not,
+and can carry the verdict as `verdict`. A verdict is one of:
 
 | Verdict | Meaning | What the agent does next |
 | --- | --- | --- |
 | `keep` | The take is good. | Move on. If the scene belongs to a storyboard shot, select the take with `POST productions/shots/{shot_id}/select-take` (`{"kind": "video", "id": job_id}`). |
 | `retry` | Close; fix what the note says. | Apply the note to the prompt and make one more take. |
-| `reject` | The shot does not work. | Rethink it. Generating the **same, unchanged scene** again returns 409 `shot_rejected`. |
+| `reject` | The shot does not work. | Rethink it. Generating the **same, unchanged scene** again without a take approval returns 409 `shot_rejected`. |
 
 The human gives the verdict in either mode:
 
@@ -378,6 +406,14 @@ newest first, with the prompt, settings, tags, notes and the human's words: the 
 of what this person likes. Browser generations are not paused. Set
 `human_review_after_agent_video` to `false` in `studio-config.json` to turn the pause off.
 
+When the human prefers an earlier take ("let's keep the first one"), add `keep_job_id` to the
+verdict on the latest take (whose verdict is then `retry` or `reject`), or use
+`client.keep_take(job_id, human_words)` when every take is already judged.
+
+**Is the server current?** `GET /agent/v1/` and `GET schema` report `code.stale`. A server
+started before the last code change enforces old rules; the SDK warns with
+`StaleServerWarning` before its first generation. Ask the human to restart Studio.
+
 ## Choose a workflow
 
 | Task | Reference |
@@ -391,6 +427,8 @@ of what this person likes. Browser generations are not paused. Set
 | Timelines, audio, picture, captions and local export | [Editing](AGENT_API_REFERENCE.md#timeline-editing-and-accounts) |
 | Browser drafts, return flows and human consent | [Browser collaboration](AGENT_API_REFERENCE.md#browser-collaboration-and-shared-drafts) |
 | Paginated workspace/library reads | [Efficient reads](AGENT_API_REFERENCE.md#efficient-reads) |
+| Still continuity (place and size), locking fixed objects, prop placement | [Images and media](AGENT_API_REFERENCE.md#images-and-reusable-media), [Image Studio guide](IMAGE_STUDIO_GUIDE.md) |
+| Voice lines, stems, device sound, music fit, Resolve export, final-file check | [Sound and delivery guide](SOUND_AND_DELIVERY_GUIDE.md) |
 
 The SDK also has a CLI: `.venv/bin/python agent_client.py schema`. Use JSON body
 files for mutations rather than embedding complex JSON in shell commands.
@@ -434,7 +472,7 @@ Errors have a code and a readable message:
 | **403** missing approval or connection | Obtain the required human action; do not bypass it. |
 | **404** missing resource | Check the ID and workspace. |
 | **409** stale revision or key conflict | Fetch current state and reconcile. |
-| **409** a production rule (`human_review_required`, `usage_reading_required`, `shot_kit_incomplete`, `plan_*`, …) | Follow the [error-code table](AUTONOMOUS_PRODUCTION_GUIDE.md#error-codes-and-what-to-do); usually ask the human. |
+| **409** a production rule (`human_review_required`, `start_frame_required`, `shot_kit_incomplete`, `plan_*`, …) | Follow the [error-code table](AUTONOMOUS_PRODUCTION_GUIDE.md#error-codes-and-what-to-do); usually ask the human. |
 | **413** request too large | Reduce the payload within configured limits. |
 | Provider limit, rejection or timeout on a job | Read the recorded error; check the existing request before any new submission. |
 

@@ -3,12 +3,17 @@
 A plan lists the scenes (shots) to make, how many takes each may use and an optional
 budget: a cap on total takes and on Grok usage percentage. The human approves the plan
 once, in the browser or through an agent relaying their own words. Generation under the
-plan replaces the per-request approved=true. Every safety step still applies: the human
-review pause, usage readings while costs are being learned, and the rejected-shot rule.
+plan replaces the per-request approved=true; plan-only generation keeps the human review
+pause and the rejected-shot rule.
 
-Verdicts drive each shot: keep finishes it; retry authorizes one more take, which may
-change the scene; reject means the shot must be rethought, so a changed scene needs the
-plan approved again. Any edit to the plan clears its approval.
+The usual flow needs no plan approval at all: each take is approved by the human just
+before it is generated (approved=true with their human_words), and that one approval also
+covers scene edits since the plan was approved, take limits and the budget, which become
+warnings on the job. Plans then serve as the shot list and cost tracker.
+
+Verdicts drive each shot under plan-only generation: keep finishes it; retry authorizes
+one more take, which may change the scene; reject means the shot must be rethought. Any
+edit to the plan's shots or budget clears its approval; scene edits never do.
 """
 import copy
 import hashlib
@@ -176,41 +181,58 @@ class Plans:
         return round(total,3),unknown
 
     # ----- the gate used by generation -----
-    def authorize(self, plan_id, scene):
-        """Raise unless this plan allows one more take of this scene now. Returns the plan item."""
-        plan=self._plan(plan_id)
+    def authorize(self, plan_id, scene, take_approval=None):
+        """Check whether this plan allows one more take of this scene now.
+
+        Without a take approval (plan-only, autonomous generation) every rule refuses. With
+        take_approval (approved=true plus the human's own words for this one take) the human
+        has just approved this exact take, so the plan's approval state, scene changes since
+        approval, the kit check, take limits and the budget become warnings recorded on the
+        job. A closed plan, a scene outside the plan and a kept shot still refuse.
+        Returns {'item': plan item, 'warnings': [{'code', 'message'}]}."""
+        plan=self._plan(plan_id);warnings=[]
+        def refuse(code,message,status):
+            if take_approval is None:raise APIError(code,message,status)
+            warnings.append(dict(code=code,message=message))
         if plan['status']=='closed':raise APIError('plan_closed','This plan is closed.',409)
-        if plan['status']!='approved' or not plan.get('approval') or plan['approval']['plan_hash']!=self.digest(plan):
-            raise APIError('plan_not_approved','The human has not approved the current version of this plan. Show it to them and ask.',403)
         item=next((i for i in plan['items'] if i['scene_id']==scene['id']),None)
-        if item:self.app.shot_kit.require_ready(scene)
-        if not item:raise APIError('not_in_plan','This scene is not part of the approved plan. Add it to the plan and ask the human to approve again.',403)
+        if not item:raise APIError('not_in_plan','This scene is not part of the plan. Add it with PUT plans/{id}'+(
+            '.' if take_approval else ' and ask the human to approve again, or generate with approved=true and human_words.'),403)
         jobs=self._jobs(plan_id,scene['id'])
         verdicts=[(j.get('human_review') or {}).get('verdict') for j in jobs]
         if 'keep' in verdicts:raise APIError('plan_item_done','The human kept a take of this shot; it is finished.',409)
+        approval=plan.get('approval') or {}
+        approved=plan['status']=='approved' and bool(approval) and approval.get('plan_hash')==self.digest(plan)
+        if not approved:
+            refuse('plan_not_approved','The human has not approved the current version of this plan. Show it to them and ask, '
+                   'or generate with approved=true and human_words.',403)
+        try:self.app.shot_kit.require_ready(scene)
+        except APIError as error:
+            if take_approval is None:raise
+            warnings.append(dict(code=error.code,message=str(error)))
         latest=jobs[-1] if jobs else None
-        approved_revision=plan['approval']['scene_revisions'].get(scene['id'])
-        if scene['revision']!=approved_revision:
+        approved_revision=(approval.get('scene_revisions') or {}).get(scene['id'])
+        if approved and scene['revision']!=approved_revision:
             retry=latest and (latest.get('human_review') or {}).get('verdict')=='retry' \
                 and scene['revision']>=((latest.get('agent_scene') or {}).get('revision') or 0)
             if not retry:
-                raise APIError('plan_scene_changed','This shot changed since the human approved the plan. Only a retry verdict '
-                    'authorizes a changed take; after a reject or any other change, update the plan and ask the human to approve it again.',409)
-        since=[j for j in jobs if j.get('created_at',0)>=plan['approval']['approved_at']]
+                refuse('plan_scene_changed','This shot changed since the human approved the plan. Only a retry verdict '
+                    'authorizes a changed take under the plan alone; otherwise generate with approved=true and human_words for this take.',409)
+        since=[j for j in jobs if j.get('created_at',0)>=approval.get('approved_at',0)]
         if len(since)>=item['max_takes']:
-            raise APIError('plan_takes_exhausted',f"This shot has used all {item['max_takes']} takes the plan allows. Ask the human before making more.",409)
+            refuse('plan_takes_exhausted',f"This shot has used all {item['max_takes']} takes the plan allows.",409)
         all_jobs=self._jobs(plan_id)
         if plan['budget']['max_takes'] is not None and len(all_jobs)>=plan['budget']['max_takes']:
-            raise APIError('plan_budget_exceeded',f"The plan's limit of {plan['budget']['max_takes']} takes is used up. Ask the human before continuing.",409)
+            refuse('plan_budget_exceeded',f"The plan's limit of {plan['budget']['max_takes']} takes is used up.",409)
         cap=plan['budget']['usage_percent']
         if cap is not None and not self.app.mock:
             rates=self._rates();spent,_=self._spent(all_jobs,rates)
             body=scene['scene']
             estimate=self._estimate(rates,body.get('resolution'),body.get('duration')) or 0
             if spent+estimate>cap:
-                raise APIError('plan_budget_exceeded',f'This take would bring the plan to about {spent+estimate:.2f}% of the weekly Grok '
-                    f'allowance, over its {cap:g}% budget. Ask the human before continuing.',409)
-        return item
+                refuse('plan_budget_exceeded',f'This take would bring the plan to about {spent+estimate:.2f}% of the weekly Grok '
+                    f'allowance, over its {cap:g}% budget.',409)
+        return dict(item=item,warnings=warnings)
 
     # ----- read model -----
     def view(self, plan_id):

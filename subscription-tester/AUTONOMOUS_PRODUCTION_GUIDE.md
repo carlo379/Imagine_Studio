@@ -36,14 +36,25 @@ honestly is the agent's responsibility, exactly as with `approved: true`.
 1. **Learn the human's choices:** the director and reviewer models, past verdicts, what a take costs.
 2. **Develop the story:** series bible, characters, locations, script, shot list.
 3. **Build each shot's kit:** 3D staging, approved first frame, last frame (end-state shots), middle frame (complex action), direction.
-4. **Propose a plan:** the shots, takes per shot and a budget. **The human approves it once.**
-5. **Generate one take** under the plan, with the usage reading taken just before.
-6. **Review it:** an independent reviewer session scores it; **the human gives the verdict** and the usage reading after.
-7. **Act on the verdict:** keep → next shot; retry → fix and make one more take; reject → rethink and ask for approval again.
-8. **Learn:** every verdict, disagreement and reading improves the next prompt, review and estimate.
+4. **Optionally propose a plan:** the shot list, takes per shot and a budget, to track progress and cost.
+5. **Ask the human to approve the next take, then generate it.** This is **the one human stop**:
+   `approved: true` with their own words (`human_words`), and, in the same call, their verdict
+   on the previous take if they gave one.
+6. **Review it:** optionally an independent reviewer session scores it; the human's verdict is all Studio needs.
+7. **Act on the verdict:** keep → next shot; retry → fix and make one more take; reject → rethink.
+8. **Learn:** every verdict, disagreement and optional usage reading improves the next prompt, review and estimate.
 
-Studio pauses after every agent take until the human's verdict is recorded. One take
-at a time, judged before the next.
+One take at a time, judged before the next. Generation with an approval for that take
+never waits on anything else: no plan re-approval, no AI review, no usage reading, no
+separate frame approval and no separate verdict call.
+
+## Before you start: is the server current?
+
+`GET /agent/v1/` and `GET schema` report `code`: the digest of the code the server loaded,
+the digest on disk now, and `stale`. When `stale` is true the server was started before the
+last code change and enforces old rules (for example, old approval stops). Ask the human to
+restart Studio before generating. The SDK checks this once before the first generation and
+warns with `StaleServerWarning`; the browser shows a banner.
 
 ## 1. Learn the human's choices
 
@@ -87,6 +98,11 @@ approved pictures to move between. Build it for every shot before generating:
    keyframe strictly inside the take.
 5. **Never send the staging render to the video model**, as a frame, keyframe or
    reference. Grok would animate the mannequins.
+   A frame you edited locally and uploaded is approved in one of two ways: relay the human's
+   approval with `POST assets/{id}/approve` (`{"human_words": "..."}`, or
+   `client.approve_asset(id, words)`), or simply let the take's approval cover it (see
+   [5. Generate a take](#5-generate-a-take)). In the browser, **Approve start frame** sits
+   beside the generation request.
 6. **Record the kit:**
 
 ```python
@@ -110,7 +126,7 @@ client.request(f"scenes/{scene_id}/kit", "PUT", {
 | Complex action decided | `complex_action` is true or false |
 | Staging | `staging_asset_id` names an uploaded render |
 | First frame | attached, and approved if it was generated |
-| Last frame (end-state shots) | attached, approved, and `last_frame_from_first` is true |
+| Last frame (end-state shots) | attached, approved, and consistent with the first: `last_frame_from_first` is true, or `continuity_check_id` names a passed or human-accepted [continuity check](IMAGE_STUDIO_GUIDE.md#continuity-check-fixed-objects-between-a-first-and-last-frame) of the same two frames |
 | Middle keyframe (complex action) | approved keyframe strictly inside the take, and `middle_frame_from_first` is true |
 | No mockup leak | the staging render is not a frame, keyframe or reference |
 | Prompt | validates with no issues and every named character attached |
@@ -133,8 +149,14 @@ plan = client.request("plans", "POST", {
 
 `GET plans/{id}` shows each shot's state, kit checklist and cost estimate ("expected", one
 take per shot; "worst case", every allowed take), plus the usage spent so far. **A plan
-cannot be approved until every shot's kit is ready.** Show the human the plan: shots,
-estimate, budget and kit hints. Then relay their approval:
+cannot be approved until every shot's kit is ready.**
+
+Plan approval is **optional**. In the usual flow each take is approved by the human right
+before it is generated (see [5. Generate a take](#5-generate-a-take)), and that approval also
+covers a plan that is unapproved or changed since, edited shots, and the plan's take and budget
+limits, which are then recorded on the job as `plan.warnings`. Approve a plan only when the human
+wants the agent to make takes **without** asking before each one. Then show them the plan: shots,
+estimate, budget and kit hints, and relay their approval:
 
 ```python
 plan = client.request(f"plans/{plan['id']}/approve", "POST",
@@ -142,40 +164,60 @@ plan = client.request(f"plans/{plan['id']}/approve", "POST",
 ```
 
 In direct mode the human clicks **Approve plan** in the **Production plans** panel. Any change
-to the plan's shots, takes or budget clears the approval; a title or notes change does not.
+to the plan's shots, takes or budget clears the approval; a title or notes change does not, and
+editing a shot's scene (prompt, frames, kit) never does.
 
 ## 5. Generate a take
 
-Under an approved plan, `plan_id` replaces the per-take `approved: true`. While the cost of
-the shot's resolution is still being learned, first ask the human for their **Grok
-Settings → Usage** percentage.
+**The one human stop is here.** Show the human exactly what will be generated (prompt,
+frames, duration, resolution) and ask for their go-ahead. Then send `approved: true` with
+their words, verbatim, in `human_words`. If they also gave a verdict on the previous take
+("the last one was too fast, go ahead with this one"), send it as `verdict` in the same call:
 
 ```python
-job = client.request(f"scenes/{scene_id}/generate", "POST", {
-    "expected_revision": scene["revision"],
-    "plan_id": plan["id"],
-    "agent": {"model": "claude-opus-5-5", "session_id": "director-7f3a", "product": "Claude Code"},
-    "usage_before_percent": 41.5,          # or "usage_reading_unavailable": True
-}, idempotency_key="ep3-s1-take1")
+job = client.generate(scene, approved=True, idempotency_key="ep3-s1-take2",
+    human_words="Yes, the last one was too fast. Go ahead with this one.",
+    verdict={"job_id": previous_job_id, "verdict": "retry",   # keep | retry | reject
+             "notes": "Slow the walk down."},                # human_words defaults to the top-level words
+    plan_id=plan["id"],                                       # optional: count the take in a plan
+    agent={"model": "claude-opus-5-5", "session_id": "director-7f3a", "product": "Claude Code"})
 result = client.wait_for_job(job["id"])
 ```
 
-Studio refuses the take when: the previous take still waits for a verdict, the plan is not
-approved in its current version, the shot is not in the plan or its kit is not ready, the
-shot changed without a retry verdict, a take limit or the usage cap is reached, the declared
-director model is not the chosen one, or a needed usage reading is missing. See
-[Error codes](#error-codes-and-what-to-do). Never retry a failed paid generation
-automatically, and resume polling (`POST jobs/{id}/resume`) instead of resubmitting.
+The same body works with `client.request(f"scenes/{id}/generate", "POST", {...})`. The
+approval for this take covers:
 
-Without a plan, a single take can still be authorized with `approved: true` after the human
-approved that exact request; every other rule still applies.
+- **the attached frames:** a start frame (or last frame or keyframe) that was uploaded or
+  edited locally needs no separate approval; it must still be named and attached;
+- **plans:** a plan that is not approved, or whose shot changed since, and its take and
+  budget limits (they become `plan.warnings` on the job);
+- **the review pause:** a previous take still waiting for a verdict does not block, and a
+  rejected, unchanged shot can be generated again;
+- **usage readings:** `usage_before_percent` is optional and never blocks (send it when the
+  human offers it; it improves cost estimates).
+
+What still refuses: a closed plan, a scene outside the plan, a shot the human already kept,
+the wrong director model, a stale `expected_revision`, prompt conflicts and the live lock.
+The job records the approval as `take_approval` (`human_words`, `approved_at`).
+
+`approved: true` **without** `human_words`, or `plan_id` alone under an approved plan, still
+works for autonomous runs, with the stricter rules: the previous take must have a verdict, the
+start frame must be approved, the plan must be approved in its current version, the shot must
+not have changed without a retry verdict, and take limits and the usage cap refuse. See
+[Error codes](#error-codes-and-what-to-do).
+
+Never retry a failed paid generation automatically. Resume polling (`POST jobs/{id}/resume`,
+or `client.resume_job(id)`) instead of resubmitting: the job returns to `pending` at once, so
+`wait_for_job` waits for the resumed attempt instead of returning the old error.
 
 ## 6. Review the take
 
-When the take finishes, successful or failed, Studio pauses agent generation until the
-human's verdict is recorded.
+When the take finishes, successful or failed, it waits for the human's verdict. The verdict
+can be relayed on its own (below) or together with the approval of the next take (see
+[5. Generate a take](#5-generate-a-take)).
 
-**AI review (when the human chose a reviewer model).** Fetch `GET jobs/{id}/review-packet`.
+**AI review (optional, when the human chose a reviewer model).** The human's verdict never
+waits for it; a review sent after the verdict still counts toward reviewer agreement. Fetch `GET jobs/{id}/review-packet`.
 Start a **new, separate session** on the chosen reviewer model, for example a Claude Code
 subagent started with that `model` or `claude -p --model <model>` in a fresh session, or
 `codex exec -m <model>` in a fresh session. Give it only the packet: the brief, the story
@@ -200,9 +242,9 @@ below 6 → **retry**; otherwise **keep**. A review must come from the chosen re
 a different session from the director, and must report the frames it examined. If the
 reviewer cannot run, submit `{"unavailable": true, "reason": "..."}`. Never invent a review.
 
-**Human verdict.** Show the human the take (`GET jobs/{id}/download`), the AI suggestion and
-its issues, and ask for their verdict and, while costs are being learned, the Usage % again.
-Relay their answer word for word:
+**Human verdict.** Show the human the take (`GET jobs/{id}/download`) and, if you ran one,
+the AI suggestion and its issues, and ask for their verdict. Relay their answer word for word
+(the usage reading is optional):
 
 ```python
 client.request(f"jobs/{job['id']}/human-review", "POST", {
@@ -210,7 +252,7 @@ client.request(f"jobs/{job['id']}/human-review", "POST", {
     "human_words": "Closer, but she smiles too early.",  # verbatim; required
     "notes": "Delay the smile until after the line.",     # optional, yours
     "tags": ["flat_acting"],                              # optional
-    "usage_after_percent": 43.0,                          # or "usage_reading_unavailable": True
+    "usage_after_percent": 43.0,                          # optional
 })
 ```
 
@@ -218,15 +260,32 @@ Tags: `bad_anatomy`, `off_model`, `wrong_action`, `flat_acting`, `continuity`, `
 In direct mode the human uses the review banner: AI suggestion, **✓ Keep**, **↻ Retry**,
 **✗ Reject**, tags, notes and the usage %.
 
+**Keeping an earlier take.** When the human prefers a take they judged before ("let's keep
+the first one"), send the verdict on the latest take with `keep_job_id` naming the earlier
+one; the verdict on the latest take is then `retry` or `reject`, and the earlier take becomes
+the kept one (its first verdict stays in its `history`):
+
+```python
+client.request(f"jobs/{latest['id']}/human-review", "POST", {
+    "verdict": "reject", "keep_job_id": first_take_id,
+    "human_words": "let's keep the first one",
+})
+```
+
+If every take of the shot is already judged, `POST jobs/{id}/keep` with the human's words
+makes that take the kept one. In the review banner, **Keep an earlier take instead** does the
+same.
+
 ## 7. Act on the verdict
 
 | Verdict | Meaning | Next step |
 | --- | --- | --- |
 | **keep** | The take is good | The shot is finished under the plan. If the scene belongs to a storyboard shot, select the take there: `POST productions/shots/{shot_id}/select-take` with `{"kind": "video", "id": job_id}` |
 | **retry** | Close; fix what the note says | Apply the note to the prompt (and frames if needed) and make one more take; the retry verdict authorizes a changed shot |
-| **reject** | The shot does not work | Rethink it. The unchanged scene cannot be generated again; show the human the changed shot and relay their approval of the plan again |
+| **reject** | The shot does not work | Rethink it, show the human the changed shot and relay their approval of that take |
 
-When a shot runs out of takes or the plan reaches its budget, stop and ask the human.
+Under plan-only generation, when a shot runs out of takes or the plan reaches its budget,
+stop and ask the human; with a per-take approval those limits are warnings.
 
 ## 8. Learn from every take
 
@@ -236,7 +295,7 @@ When a shot runs out of takes or the plan reaches its budget, stop and ask the h
 - **Cost:** each before/after pair of Usage readings becomes a sample of % per second. A
   resolution is established after 3 clean samples that agree within 50% of their median, or
   after 6 samples. Samples are discarded after a weekly reset or when another generation ran
-  between the readings. Then readings for it are optional and plans show estimates.
+  between the readings. Readings are always optional; established resolutions get estimates in plans.
 - **Kit:** `GET kit/stats` compares keep rates for complete and incomplete kits, first-and-last
   versus first-only frames, and takes with a middle keyframe.
 
@@ -252,10 +311,14 @@ are for the human's local Studio tab. `openapi.json` has the exact shapes.
 | Keep rate by kit | `GET kit/stats` | `GET /api/kit-stats` |
 | Plans | `GET` / `POST plans`, `GET` / `PUT plans/{id}` | `GET /api/plans`, `GET /api/plans/{id}`, `POST /api/plans`, `POST /api/plans/{id}/update` |
 | Approve or close a plan | `POST plans/{id}/approve` (`human_words` required), `POST plans/{id}/close` | `POST /api/plans/{id}/approve`, `POST /api/plans/{id}/close` |
-| Generate a take | `POST scenes/{id}/generate` with `plan_id` or `approved: true` | **Generate video** (with **Grok usage % now**) |
+| Generate a take (the one stop) | `POST scenes/{id}/generate` with `approved: true` and `human_words` (optional `verdict`, `plan_id`) | **Generate video** (Grok usage % optional) |
+| Approve an uploaded or edited image | `POST assets/{id}/approve` (`human_words` required) | **Approve start frame** beside the request, `POST /api/assets/{id}/approve` |
 | Review packet and frames | `GET jobs/{id}/review-packet`, `GET jobs/{id}/review-frames/{name}` | `GET /api/jobs/{id}/review-packet`, `GET /api/jobs/{id}/review-frames/{name}` |
-| AI review | `POST jobs/{id}/ai-review` | shown in the review banner |
-| Human verdict | `POST jobs/{id}/human-review` (`human_words` required) | review banner, `POST /api/video/human-review` |
+| AI review (optional) | `POST jobs/{id}/ai-review` | shown in the review banner |
+| Human verdict | `POST jobs/{id}/human-review` (`human_words` required), or `verdict` on the next generate | review banner, `POST /api/video/human-review` |
+| Keep an earlier take | `keep_job_id` on the verdict, or `POST jobs/{id}/keep` (`human_words` required) | **Keep an earlier take instead** in the review banner, `POST /api/video/keep` |
+| Is the server current? | `GET /` or `GET schema` → `code.stale`; the SDK warns (`StaleServerWarning`) before the first generation | a banner when the server runs older code |
+| Final file ready to post? | `POST delivery/checks`, then `POST delivery/checks/{id}/fix` (see the [sound and delivery guide](SOUND_AND_DELIVERY_GUIDE.md)) | `/delivery` page |
 | Usage reading after a take | with the verdict, or `POST jobs/{id}/usage` | `POST /api/video/usage` |
 | Verdict log (taste) | `GET human-reviews` | `GET /api/human-reviews` |
 | Reviewer agreement | `GET reviewer/agreement` | `GET /api/reviewer-agreement` |
@@ -265,28 +328,31 @@ are for the human's local Studio tab. `openapi.json` has the exact shapes.
 
 | Code | Meaning | What to do |
 | --- | --- | --- |
-| `human_review_required` | The previous agent take waits for the human's verdict | Show it to the human; relay their verdict |
-| `ai_review_required` | A reviewer model is chosen and this take has no AI review | Run the reviewer session and submit it (or `unavailable` with a reason) |
-| `usage_reading_required` | This resolution's cost is still being learned | Ask the human for their Grok Settings → Usage % and send it |
-| `shot_rejected` | The human rejected this unchanged scene | Rethink and change the shot |
+| `human_review_required` | The previous agent take waits for a verdict and this call has no take approval | Ask the human; send their verdict, or `approved: true` + `human_words` (+ `verdict`) for the next take |
+| `start_frame_required` | The start frame is missing, not attached, or not approved | Attach it; approve it with the take's `human_words` or `POST assets/{id}/approve` |
+| `shot_rejected` | The human rejected this unchanged scene and this call has no take approval | Rethink the shot, or relay the human's approval of this take |
 | `shot_kit_incomplete` | The shot kit is not ready | Read `GET scenes/{id}/kit` and complete what is missing |
-| `plan_not_approved` | The plan was never approved, or changed since | Show the human the current plan; relay their approval |
-| `not_in_plan` | The scene is not in the plan | Add it, then ask for approval again |
-| `plan_scene_changed` | The shot changed without a retry verdict | Ask the human to approve the plan again |
+| `plan_not_approved` | Plan-only generation, and the plan was never approved or changed since | Ask the human to approve this take (`approved: true` + `human_words`) |
+| `not_in_plan` | The scene is not in the plan | Add it with `PUT plans/{id}`, or leave out `plan_id` |
+| `plan_scene_changed` | Plan-only generation, and the shot changed without a retry verdict | Ask the human to approve this take |
 | `plan_item_done` | The human kept a take of this shot | Move to the next shot |
-| `plan_takes_exhausted` | This shot used every take allowed since the last approval | Ask the human before making more |
-| `plan_budget_exceeded` | The plan's take limit or usage cap would be passed | Ask the human before continuing |
+| `plan_takes_exhausted` | Plan-only generation, and this shot used every allowed take | Ask the human to approve this take |
+| `plan_budget_exceeded` | Plan-only generation, and the take limit or usage cap would be passed | Ask the human to approve this take |
+| `invalid_approval` | `human_words` is empty or too long | Quote the human's approval verbatim (1–2,000 characters) |
 | `plan_closed` | The plan is closed | Stop |
 | `director_identity_required`, `wrong_director_model` | The human chose a different director model | Declare `agent`, or switch to the chosen model |
 | `wrong_reviewer_model`, `reviewer_not_independent` | Review from another model, or from the director's session | Start a fresh session on the chosen reviewer model |
 | `invalid_review`, `review_exists` | Malformed review (missing scores or frames), or already reviewed | Fix the JSON; one AI review per take |
-| `approval_required`, `idempotency_required` | No authorization, or no idempotency key | Use an approved `plan_id` (or `approved: true`) and an 8–100 character key |
+| `approval_required`, `idempotency_required` | No authorization (or `human_words`/`verdict` without `approved: true`), or no idempotency key | Send `approved: true` with `human_words` and an 8–100 character key |
+
+`ai_review_required` and `usage_reading_required` are retired: an AI review and usage
+readings are optional and never block.
 
 ## Settings and stored data
 
 | Item | Where | Notes |
 | --- | --- | --- |
-| `human_review_after_agent_video` | `studio-config.json` | `true` by default; pauses agent generation after every take |
+| `human_review_after_agent_video` | `studio-config.json` | `true` by default; every agent take waits for a verdict, which only blocks generation without a take approval |
 | Director and reviewer models | private workspace `agent-roles.json` | Set by the human (browser) or relayed with their words |
 | Plans | private workspace `plans.json` (`mock-plans.json` in mock mode) | Revisioned; approval tied to a fingerprint of shots, takes and budget |
 | Verdicts, AI reviews, usage readings, kit snapshots | each job in the generation history | Read through `human-reviews`, `reviewer/agreement`, `usage/calibration`, `kit/stats` |

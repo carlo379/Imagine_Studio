@@ -74,13 +74,16 @@ class DirectorReviewTests(unittest.TestCase):
         self.assertEqual(self.app.director_review.suggestion({'story':8,'identity':9,'craft':5,'performance':9},[]),'retry')
         self.assertEqual(self.app.director_review.suggestion({'story':8,'identity':9,'craft':7,'performance':6},[{'severity':'polish'}]),'keep')
 
-    def test_relayed_verdict_waits_for_the_review_and_agreement_is_tracked(self):
+    def test_ai_review_is_optional_and_agreement_is_tracked(self):
         self.roles()
+        skipped=self.take('agreement-0',text='blinks.')
+        # A reviewer is chosen, yet the human's verdict alone is enough.
+        self.assertEqual(self.call('POST',f"jobs/{skipped['id']}/human-review",{'verdict':'retry','human_words':'Blink slower.'})['human_review']['verdict'],'retry')
+        self.assertIsNone(self.call('GET',f"jobs/{skipped['id']}").get('ai_review'))
         first=self.take('agreement-1')
-        with self.assertRaises(APIError) as error:self.call('POST',f"jobs/{first['id']}/human-review",{'verdict':'keep','human_words':'Keep.'})
-        self.assertEqual(error.exception.code,'ai_review_required')
-        self.call('POST',f"jobs/{first['id']}/ai-review",GOOD)
+        # A review sent after the verdict still counts toward agreement.
         self.call('POST',f"jobs/{first['id']}/human-review",{'verdict':'keep','human_words':'Keep.'})
+        self.call('POST',f"jobs/{first['id']}/ai-review",GOOD)
         second=self.take('agreement-2',text='nods.')
         self.call('POST',f"jobs/{second['id']}/ai-review",{'unavailable':True,'reason':'Codex usage limit reached.'})
         self.call('POST',f"jobs/{second['id']}/human-review",{'verdict':'retry','human_words':'Slower.'})

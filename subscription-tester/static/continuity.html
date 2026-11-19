@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Continuity check · Imagine Studio</title>
+<style>
+  :root { --bg:#14151a; --panel:#1d1f26; --line:#2e313b; --text:#e9eaee; --muted:#9a9eab; --held:#3cc85a; --moved:#eb3228; --changed:#f5aa1e; --accent:#7aa7ff; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.45 system-ui, -apple-system, sans-serif; }
+  header { padding:16px 20px; border-bottom:1px solid var(--line); }
+  h1 { font-size:18px; margin:0 0 4px; }
+  header p { margin:0; color:var(--muted); max-width:900px; }
+  main { display:grid; grid-template-columns:minmax(0,1fr) 340px; gap:16px; padding:16px 20px; }
+  @media (max-width: 900px) { main { grid-template-columns:1fr; } }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px; }
+  h2 { font-size:15px; margin:0 0 10px; }
+  label { display:block; color:var(--muted); font-size:13px; margin:8px 0 4px; }
+  input, textarea, select { width:100%; background:#111217; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:7px 8px; font:inherit; }
+  button { background:var(--accent); color:#0c1020; border:0; border-radius:6px; padding:8px 12px; font-weight:600; cursor:pointer; }
+  button.secondary { background:#2b2f3a; color:var(--text); }
+  button:disabled { opacity:.5; cursor:default; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:10px; }
+  .frames { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .frame { position:relative; background:#0d0e12; border-radius:6px; overflow:hidden; min-height:80px; }
+  .frame img { display:block; width:100%; user-select:none; -webkit-user-drag:none; }
+  .frame .tag { position:absolute; left:6px; top:6px; background:#000a; padding:2px 6px; border-radius:4px; font-size:12px; }
+  .box { position:absolute; border:2px solid var(--accent); background:#7aa7ff22; }
+  .box span { position:absolute; left:0; top:-20px; background:var(--accent); color:#0c1020; font-size:11px; padding:1px 5px; border-radius:3px; white-space:nowrap; }
+  .results img { width:100%; border-radius:6px; margin-top:8px; }
+  table { width:100%; border-collapse:collapse; margin-top:10px; font-size:13px; }
+  th, td { text-align:left; padding:5px 6px; border-bottom:1px solid var(--line); }
+  .held { color:var(--held); } .moved { color:var(--moved); } .changed { color:var(--changed); } .resized { color:#d070e0; } .flat { color:var(--muted); }
+  .verdict { font-size:20px; font-weight:700; }
+  .list button { width:100%; text-align:left; background:#23262f; color:var(--text); margin-bottom:6px; font-weight:400; }
+  .muted { color:var(--muted); font-size:13px; }
+  .error { color:var(--moved); }
+  .tabs button { padding:5px 10px; }
+  nav a { color:var(--accent); margin-right:12px; font-size:13px; }
+</style>
+</head>
+<body>
+<header>
+  <nav><a href="/">Studio</a><a href="/continuity">Continuity</a><a href="/delivery">Delivery check</a><a href="/sound">Sound</a><a href="/prop-placement">Prop placement</a></nav>
+  <h1>Continuity check</h1>
+  <p>Compare a shot's first and last frames. People and moving things are expected to change; fixed things (set, furniture, props, the camera) must not.
+  Draw a box around each fixed object on the first frame, then run the check. Each box passes when its object is found in the same place and at the same size, within the tolerances, and still matches. Draw each box around the whole object, edges included.</p>
+</header>
+<main>
+  <div>
+    <section>
+      <h2>Frames</h2>
+      <div class="frames">
+        <div><label for="first">First frame asset ID</label><input id="first" placeholder="asset id"></div>
+        <div><label for="last">Last frame asset ID</label><input id="last" placeholder="asset id"></div>
+      </div>
+      <div class="frames" style="margin-top:10px">
+        <div class="frame" id="firstFrame"><span class="tag">First: drag to mark a fixed object</span></div>
+        <div class="frame" id="lastFrame"><span class="tag">Last</span></div>
+      </div>
+      <div class="row">
+        <label for="tolerance" style="margin:0">Tolerance (% of width)</label>
+        <input id="tolerance" type="number" step="0.1" min="0.05" max="10" value="0.5" style="width:90px">
+        <label for="scaleTolerance" style="margin:0">Size tolerance (%)</label>
+        <input id="scaleTolerance" type="number" step="0.1" min="0.1" max="10" value="0.5" style="width:90px">
+        <input id="title" placeholder="Title, e.g. Shot 4 start vs cheer" style="flex:1;min-width:200px">
+      </div>
+      <div class="row"><button id="run">Run check</button><button class="secondary" id="clear">Clear boxes</button><button class="secondary" id="lock" title="Copy the first frame's pixels of each box into the last frame, with a soft edge">Copy fixed objects into last frame</button><span class="muted" id="status"></span></div>
+      <table id="regionTable"><thead><tr><th>Fixed object</th><th>Box</th><th></th></tr></thead><tbody></tbody></table>
+    </section>
+    <section class="results" id="results" hidden style="margin-top:16px">
+      <h2>Result: <span class="verdict" id="verdict"></span></h2>
+      <div id="reasons" class="muted"></div>
+      <div class="row tabs"><button class="secondary" data-img="map">Map</button><button class="secondary" data-img="overlay">50% overlay</button><button class="secondary" data-img="difference">Difference</button></div>
+      <img id="resultImage" alt="Continuity result image">
+      <p class="muted">Map colors: <span class="moved">red = moved</span>, <span class="changed">amber = changed</span>, <span class="resized">purple = resized</span>, grey = flat (not judged); held areas are left clear. Boxes show your fixed objects.</p>
+      <table><thead><tr><th>Fixed object</th><th>Status</th><th>Shift</th><th>Size</th><th>Match</th></tr></thead><tbody id="resultRows"></tbody></table>
+      <div id="acceptArea" hidden>
+        <label for="words">Accept anyway, in your own words</label>
+        <textarea id="words" rows="2" placeholder="e.g. Accepted, the lantern change is fine"></textarea>
+        <div class="row"><button id="accept">Accept check</button></div>
+      </div>
+    </section>
+  </div>
+  <section class="list">
+    <h2>Saved checks</h2>
+    <div id="checks" class="muted">Loading…</div>
+  </section>
+</main>
+<script src="/static/continuity.js"></script>
+</body>
+</html>

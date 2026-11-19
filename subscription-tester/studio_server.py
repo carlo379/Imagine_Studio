@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import sys
 import threading
 import time
 import uuid
@@ -115,6 +116,18 @@ class Studio(Tester):
         from creative_studio import CreativeStudio
         from precision_studio import PrecisionStudio
         self.asset_studio=AssetStudio(self)
+        from prop_models import PropModels
+        self.prop_models=PropModels(self, save_json)
+        from frame_continuity import FrameContinuity
+        self.continuity=FrameContinuity(self, save_json)
+        from delivery_check import DeliveryCheck
+        self.delivery=DeliveryCheck(self, save_json)
+        from sound_tools import SoundTools
+        self.sound=SoundTools(self, save_json)
+        from resolve_export import ResolveExport
+        self.resolve_export=ResolveExport(self, save_json)
+        from prop_placement import PropPlacement
+        self.prop_placement=PropPlacement(self, save_json)
         self.creative=CreativeStudio(self)
         self.precision=PrecisionStudio(self)
         from editing_studio import EditingStudio
@@ -253,7 +266,7 @@ class Studio(Tester):
         path = self.storage / 'assets' / f"{identity}.{match['ext']}"
         return match, path
 
-    def resolve(self, settings):
+    def resolve(self, settings, frames_approved=False):
         body = copy.deepcopy(settings)
         recording=body.pop('_studio_audio_reference',None) or (body.get('_studio_scene') or {}).get('recording')
         if recording:
@@ -275,7 +288,13 @@ class Studio(Tester):
         def resolve_image(value, allow=False):
             if isinstance(value, dict) and set(value) == {'asset_id'}:
                 asset, path = self.asset(value['asset_id'])
-                if asset.get('generated') and not asset.get('approved') and not allow:
+                if asset.get('kind') == 'prop_model_render':
+                    from prop_models import VIDEO_REFUSAL
+                    raise ValueError(VIDEO_REFUSAL)
+                if asset.get('kind') == 'continuity_check':
+                    from frame_continuity import VIDEO_REFUSAL as CHECK_REFUSAL
+                    raise ValueError(CHECK_REFUSAL)
+                if asset.get('generated') and not asset.get('approved') and not allow and not frames_approved:
                     raise ValueError('Review and approve the Image Studio candidate before using it in a video.')
                 return {'url': f"data:{asset['mime']};base64," + base64.b64encode(path.read_bytes()).decode()}
             return value
@@ -291,7 +310,8 @@ class Studio(Tester):
         return validate_video(body, CONFIG)
 
     def start_video(self, settings, approved, agent_key=None, agent_fingerprint=None, agent_scene=None,
-                    usage_before=None, usage_unavailable=False, plan=None, agent_identity=None, kit=None):
+                    usage_before=None, usage_unavailable=False, plan=None, agent_identity=None, kit=None,
+                    take_approval=None):
         if not self.mock and not CONFIG['live_generations_enabled']:
             raise ValueError('Live video generation is locked in studio-config.json.')
         if not approved:
@@ -300,29 +320,28 @@ class Studio(Tester):
             import usage_calibration
             usage_before=usage_calibration.reading(usage_before,'usage_before_percent')
         if agent_key is not None:
-            waiting=self.pending_human_review()
-            if waiting:
-                raise APIError('human_review_required',
-                    f"Video job {waiting[0]['id']} is waiting for human review. Show the human the result (or its error) and "
-                    "record a verdict (keep, retry or reject) before starting another agent generation.",409)
+            # Usage readings are optional: they improve cost estimates but never block a take.
             import usage_calibration
             usage_before=usage_calibration.reading(usage_before,'usage_before_percent')
-            if usage_before is None and usage_unavailable is not True and not self.mock and \
-                    usage_calibration.required(self.records(),settings.get('resolution')):
-                raise APIError('usage_reading_required',
-                    f"Studio is still learning what a {settings.get('resolution')} video costs. Ask the human for their Grok usage % "
-                    "(Grok Settings → Usage) right now and send it as usage_before_percent. If they cannot read it, send "
-                    "usage_reading_unavailable: true (that take will not count toward the pattern).",409)
-            rejected=self.rejected_unchanged(agent_scene)
+            # The human's approval of this very take (take_approval) is the one stop; it lifts the
+            # review pause and the rejected-shot rule. Without it, both still apply.
+            waiting=[] if take_approval else self.pending_human_review()
+            if waiting:
+                raise APIError('human_review_required',
+                    f"Video job {waiting[0]['id']} is waiting for human review. Relay the human's verdict, or generate with "
+                    "approved=true and human_words (optionally with verdict for that take) when they approved the next take.",409)
+            rejected=None if take_approval else self.rejected_unchanged(agent_scene)
             if rejected:
                 raise APIError('shot_rejected',
                     f"The human rejected video job {rejected['id']} for this scene. Rethink the shot and save a changed "
-                    "scene before generating it again; a reroll of the same scene is refused.",409)
+                    "scene, or generate with approved=true and human_words if the human approves this take anyway.",409)
         from workflow_tools import start_frame_gate,usage
-        frame_gate=start_frame_gate(self,settings)
+        # The human's approval of this take covers the frames attached to it (attachment is still required).
+        frame_gate=start_frame_gate(self,{**settings,'allow_unapproved_start_frame':True} if take_approval else settings)
+        if take_approval:frame_gate['override']=settings.get('allow_unapproved_start_frame',False) is True
         allowance_warnings=usage(self)['recent_limit_errors']
         if not frame_gate['allowed']:raise APIError('start_frame_required',' '.join(frame_gate['missing']),409)
-        body = self.resolve(settings)
+        body = self.resolve(settings, frames_approved=bool(take_approval))
         if not self.mock:
             from video_prompt_checks import blocked
             issues = self.prompting.request_status(body, settings.get('_studio_video_id'), settings.get('_studio_scene'))['prompt_issues']
@@ -338,6 +357,7 @@ class Studio(Tester):
                         'agent_key':agent_key, 'agent_fingerprint':agent_fingerprint, 'agent_scene':copy.deepcopy(agent_scene),
                         'usage':{'before':usage_before,'after':None,'unavailable':usage_unavailable is True},
                         'plan':copy.deepcopy(plan),'agent_identity':copy.deepcopy(agent_identity),'kit':copy.deepcopy(kit),
+                        'take_approval':copy.deepcopy(take_approval),
                         'allow_unapproved_start_frame':frame_gate['override'],
                         'allowance_warnings':allowance_warnings,
                         'requested_model':body['model'], 'returned_model':None, 'model_identity':'unconfirmed'}
@@ -395,7 +415,7 @@ class Studio(Tester):
         """Record a person's verdict on a finished video. source is 'browser' (the human clicked)
         or 'agent_relay' (an agent passes on the human's own words, which are required)."""
         if not isinstance(data,dict):raise ValueError('Send a JSON object.')
-        allowed={'verdict','tags','notes','usage_after_percent','usage_reading_unavailable'}|({'human_words'} if source=='agent_relay' else set())
+        allowed={'verdict','tags','notes','usage_after_percent','usage_reading_unavailable','keep_job_id'}|({'human_words'} if source=='agent_relay' else set())
         extra=set(data)-allowed-({'id'} if source=='browser' else set())
         if extra:raise ValueError('Unsupported review field: '+', '.join(sorted(extra))+'.')
         verdict=data.get('verdict')
@@ -416,25 +436,62 @@ class Studio(Tester):
             if not isinstance(words,str) or not words.strip() or len(words)>2000:
                 raise ValueError("human_words must quote the human's own verdict, verbatim (1–2,000 characters).")
             words=words.strip()
-        elif verdict in ('retry','reject') and not notes:
+        keep_id=data.get('keep_job_id')
+        if keep_id is not None:
+            if not isinstance(keep_id,str) or not keep_id:raise ValueError('keep_job_id must be the ID of an earlier take of this shot.')
+            if verdict=='keep':raise ValueError('With keep_job_id, the verdict on this take is retry or reject: the earlier take is the one kept.')
+            if not notes and source=='browser':notes='Kept an earlier take instead.'
+        if source!='agent_relay' and verdict in ('retry','reject') and not notes:
             raise ValueError('Say what to fix (retry) or why it does not work (reject) in the notes.')
         with self.lock:
             job=next((j for j in self.history if j['id']==job_id),None)
             if not job:raise ValueError('Video job not found.')
             if (job.get('human_review') or {}).get('status')!='pending':
                 raise ValueError('This video is not waiting for review.')
-            if source=='agent_relay' and self.director_review.required_before_verdict(job):
-                raise APIError('ai_review_required',"The human chose a reviewer model. Start a separate reviewer session on that model with "
-                    f"GET jobs/{job['id']}/review-packet and submit its review (or why it could not run) before relaying the human's verdict.",409)
-            readings=job.get('usage') or {}
-            if source=='agent_relay' and readings.get('before') is not None and usage is None and not unavailable:
-                raise APIError('usage_reading_required',"This take has a before reading. Ask the human for their Grok usage % now "
-                    "and send it as usage_after_percent (or usage_reading_unavailable: true).",409)
+            kept=None
+            if keep_id is not None:
+                kept=next((j for j in self.history if j['id']==keep_id),None)
+                shot=lambda j:(j.get('settings') or {}).get('_studio_video_id') or (j.get('agent_scene') or {}).get('id')
+                if not kept or kept['id']==job['id']:raise ValueError('keep_job_id must name a different, earlier take of this shot.')
+                if not shot(job) or shot(kept)!=shot(job):raise ValueError('The take to keep belongs to a different shot.')
+                if kept.get('status')!='done' or not kept.get('video'):raise ValueError('Only a finished take with a video can be kept.')
+                if (kept.get('human_review') or {}).get('status')=='pending':raise ValueError('Record the verdict on that take first.')
+            # The human's verdict alone is enough: an AI review and usage readings are optional extras.
             if usage is not None or unavailable:self._set_after(job,usage,unavailable)
             review=dict(job['human_review'],status='reviewed',verdict=verdict,tags=list(dict.fromkeys(tags)),notes=notes,
                         source=source,reviewed_at=time.time())
             if words is not None:review['human_words']=words
+            if kept is not None:
+                review['kept_instead']=kept['id']
+                self._mark_kept(kept,job['id'],words,source)
             job['human_review']=review
+            save_json(self.history_path, self.history)
+            return copy.deepcopy(job)
+
+    @staticmethod
+    def _mark_kept(kept, from_job, words, source):
+        """Make an earlier, already judged take the kept one; its first verdict stays in history."""
+        earlier=dict(kept.get('human_review') or {})
+        change=dict(at=time.time(),source=source,from_job=from_job,previous_verdict=earlier.get('verdict'),**({'human_words':words} if words else {}))
+        kept['human_review']=dict(earlier,status='reviewed',verdict='keep',kept_later=change,
+                                  history=[*earlier.get('history',[]),{k:earlier.get(k) for k in ('verdict','notes','human_words','reviewed_at') if k in earlier}])
+
+    def keep_take(self, job_id, data, *, source):
+        """After the fact: the human keeps a take that was already judged retry or reject
+        (for example "let's keep the first one" after the last take was judged)."""
+        if not isinstance(data,dict) or set(data)-{'human_words','id'}:raise ValueError('Send human_words only.')
+        words=data.get('human_words')
+        if source=='agent_relay' and (not isinstance(words,str) or not words.strip() or len(words)>2000):
+            raise ValueError("human_words must quote the human's own decision to keep this take, verbatim (1–2,000 characters).")
+        words=words.strip() if isinstance(words,str) and words.strip() else None
+        with self.lock:
+            job=next((j for j in self.history if j['id']==job_id),None)
+            if not job:raise ValueError('Video job not found.')
+            review=job.get('human_review') or {}
+            if job.get('status')!='done' or not job.get('video'):raise ValueError('Only a finished take with a video can be kept.')
+            if review.get('status')=='pending':raise ValueError('This take is waiting for its verdict: record keep there instead.')
+            if review.get('verdict')=='keep':return copy.deepcopy(job)
+            self._mark_kept(job,None,words,source)
             save_json(self.history_path, self.history)
             return copy.deepcopy(job)
 
@@ -529,6 +586,11 @@ class Studio(Tester):
                     from provider_usage import observe
                     observe(self,result,'grok_video')
                     recovery = 'Resume polling the saved request. Do not submit a duplicate.'
+                    # A just-accepted request can answer 404 before xAI registers it; keep waiting briefly.
+                    if result.status_code == 404 and time.time() - job.get('created_at', 0) < CONFIG.get('poll_not_found_grace_seconds', 90):
+                        with self.lock:job['not_found_polls'] = job.get('not_found_polls', 0) + 1
+                        time.sleep(CONFIG['poll_interval_seconds'])
+                        continue
                     if result.status_code not in (200, 202):
                         raise ProviderResponseError('Video polling stopped', result, secrets, hint=recovery)
                     payload = response_object(result) if result.content else {}
@@ -548,7 +610,8 @@ class Studio(Tester):
                             job['returned_model'] = payload.get('model') if isinstance(payload.get('model'),str) else None
                             job['model_identity'] = 'confirmed' if job['returned_model'] else 'unconfirmed'
                             usage = payload.get('usage')
-                            job['usage'] = {key: value for key, value in usage.items() if type(value) in (int, float, bool)} if isinstance(usage, dict) else {}
+                            # xAI's own usage report is kept apart: job['usage'] holds the human's Usage readings for calibration.
+                            job['provider_usage'] = {key: value for key, value in usage.items() if type(value) in (int, float, bool)} if isinstance(usage, dict) else {}
                         self.finish(job, 'done', 'Video ready. Remaining Grok allowance cannot be read by Studio. Check Grok Settings → Usage for the balance and deduction.', url)
                         return
                     if status in ('failed', 'expired'):
@@ -564,8 +627,15 @@ class Studio(Tester):
         except ProviderResponseError as error:
             hint = ' Ask xAI to enable caller-supplied audio-reference URLs for this team before retrying.' if job.get('audio_reference_access')=='denied' else ''
             self.finish(job, 'error', str(error) + hint + ' No automatic retry was made.', provider_error=error)
-        except Exception:
-            self.finish(job, 'error', 'Network, token refresh, or response validation failed. If a request ID exists, resume polling instead of submitting again.')
+        except Exception as error:
+            # Keep the cause (type and redacted message), never credentials, so a failure is diagnosable.
+            from provider_response import _sanitize
+            detail = _sanitize(f'{type(error).__name__}: {error}'.strip(), ())[:300]
+            print(f'video_worker: job {job.get("id")} failed: {detail}', file=sys.stderr, flush=True)
+            with self.lock:
+                job['worker_error'] = {'type': type(error).__name__, 'message': detail, 'at': time.time()}
+            self.finish(job, 'error', f'Network, token refresh, or response validation failed ({detail}). '
+                        'If a request ID exists, resume polling instead of submitting again.')
 
     def resume(self, identity):
         with self.lock:
@@ -575,6 +645,13 @@ class Studio(Tester):
             if not job or job['mock'] or not job.get('request_id') or job['status'] == 'done':
                 raise ValueError('Choose an unfinished live request with a saved request ID.')
             self.job = job
+            # The job is live again: drop the stale error so pollers (wait_for_job) keep waiting,
+            # and lift the pause that the failure started; finishing starts a fresh one.
+            job.update(status='pending', message='Resuming the saved request. No new generation is submitted.',
+                       resumed_at=time.time(), resume_count=job.get('resume_count', 0) + 1)
+            if (job.get('human_review') or {}).get('status') == 'pending':
+                job.pop('human_review')
+            save_json(self.history_path, self.history)
             self.state.update(phase='pending', http_status=None, job_id=identity, request_id=job['request_id'], video=None,
                               progress=None, message='Resuming the saved request. No new generation is submitted.')
         self.spawn(self.video_worker,None,job)
@@ -791,6 +868,10 @@ class StudioHandler(Handler):
             try:self.server.accounts.mock_callback(self,parse_qs(urlsplit(self.path).query));return self.send(200,b'<!doctype html><title>Mock connection</title><p>Mock account connected. No provider contacted.</p><a href="/">Continue to Studio</a><script src="/static/auth-complete.js"></script>','text/html; charset=utf-8')
             except Exception:return self.send(400,{'error':'Mock sign-in did not finish.'})
         if urlsplit(self.path).path=='/previz':return self.send(200,(ROOT/'static/previz.html').read_bytes(),'text/html; charset=utf-8')
+        if urlsplit(self.path).path=='/continuity':return self.send(200,(ROOT/'static/continuity.html').read_bytes(),'text/html; charset=utf-8')
+        if urlsplit(self.path).path=='/delivery':return self.send(200,(ROOT/'static/delivery.html').read_bytes(),'text/html; charset=utf-8')
+        if urlsplit(self.path).path=='/sound':return self.send(200,(ROOT/'static/sound.html').read_bytes(),'text/html; charset=utf-8')
+        if urlsplit(self.path).path=='/prop-placement':return self.send(200,(ROOT/'static/prop-placement.html').read_bytes(),'text/html; charset=utf-8')
         if self.path=='/static/workspace.js':
             # Scope browser drafts, and reject stale tabs after account switches.
             namespace='' if self.workspace_id=='local-owner' else 'workspace-'+self.workspace_id+':'
@@ -971,10 +1052,16 @@ class StudioHandler(Handler):
                 return self.send(202, {'ok': True})
             if self.path == '/api/video/human-review':
                 return self.send(200, self.app.record_human_review(data.get('id'), data, source='browser'))
+            if self.path == '/api/video/keep':
+                return self.send(200, self.app.keep_take(data.get('id'), data, source='browser'))
             if self.path == '/api/plans' or self.path.startswith('/api/plans/'):
                 return self.plans_route('POST', data)
             if self.path == '/api/roles':
                 return self.review_route(lambda: self.app.director_review.set_roles(data, source='browser'))
+            match=re.fullmatch(r'/api/assets/([A-Za-z0-9_-]+)/approve',self.path)
+            if match:
+                from workflow_tools import approve_asset
+                return self.review_route(lambda: approve_asset(self.app, match[1], data, 'browser'))
             match=re.fullmatch(r'/api/scenes/([A-Za-z0-9_-]+)/kit',self.path)
             if match:
                 return self.review_route(lambda: self.app.shot_kit.update(match[1], data))

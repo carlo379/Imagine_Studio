@@ -123,6 +123,7 @@ then restart. Keep credentials and per-user paths out of this shared file.
 | `prompt_limit_chars`, `prompt_limit_bytes` | Validation ceilings for the expanded request. These are limits, not writing targets. |
 | `upload_limit_mb`, `download_limit_mb` | Local upload and cached-download limits. |
 | `poll_interval_seconds`, `poll_timeout_seconds` | Polling behavior; a timeout does not resubmit a generation. |
+| `poll_not_found_grace_seconds` | For this many seconds after a Grok image or video request is accepted, a 404 while polling is treated as "still starting" (xAI can answer 404 before it registers a new request). After that, 404 means the request is gone. Never resubmits. |
 
 For current model capabilities, use the UI or API `schema`. Do not bypass
 validation by raising limits to values unsupported by the provider.
@@ -185,6 +186,11 @@ Optional browser pixel comparisons need a test-only headless browser. On Linux,
 set `IMAGINE_CAMERA_REFERENCE_BROWSER` to a separately pinned executable. The
 bundled browser installer targets macOS arm64.
 
+Prop model renders are optional. Install either engine: `pip install vtk` into
+the Studio environment (fast, flat light), or Blender (soft light; Studio finds
+it on `PATH` or in `/Applications`, or set `IMAGINE_BLENDER`). `GET
+prop-models/schema` reports which engines are available.
+
 | Source area | Responsibility |
 | --- | --- |
 | `studio_server.py` | Local server and media orchestration. |
@@ -195,6 +201,8 @@ bundled browser installer targets macOS arm64.
 | `shot_kit.py` | Shot kits and their readiness checklist (staging, first/last/middle frames, direction). |
 | `director_review.py` | Human-chosen director/reviewer models, review packets, AI reviews and agreement. |
 | `usage_calibration.py` | Learns Grok usage % per second from the human's Usage readings. |
+| `frame_continuity.py`, `static/continuity.html` | Fixed-object continuity check between a shot's first and last frames (API, `/continuity` page, shot kit). |
+| `prop_models.py`, `scripts/prop_render_*.py` | Real 3D prop models and posed reference renders (VTK or Blender) for image models; never video inputs. |
 | `editing_studio.py`, `editing_tools.py`, `editing_batches.py` | Timeline editing and bounded local exports. |
 | `tests/` | Offline Python and JavaScript suites. |
 

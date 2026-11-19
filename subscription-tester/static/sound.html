@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sound · Imagine Studio</title>
+<style>
+  :root { --bg:#14151a; --panel:#1d1f26; --line:#2e313b; --text:#e9eaee; --muted:#9a9eab; --ok:#3cc85a; --bad:#eb3228; --accent:#7aa7ff; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.45 system-ui, -apple-system, sans-serif; }
+  header { padding:16px 20px; border-bottom:1px solid var(--line); }
+  h1 { font-size:18px; margin:0 0 4px; }
+  header p { margin:0; color:var(--muted); max-width:900px; }
+  main { display:grid; grid-template-columns:minmax(0,1fr) 340px; gap:16px; padding:16px 20px; }
+  @media (max-width: 900px) { main { grid-template-columns:1fr; } }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px; }
+  h2 { font-size:15px; margin:0 0 10px; }
+  label { display:block; color:var(--muted); font-size:13px; margin:8px 0 4px; }
+  input, select { width:100%; background:#111217; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:7px 8px; font:inherit; }
+  button { background:var(--accent); color:#0c1020; border:0; border-radius:6px; padding:8px 12px; font-weight:600; cursor:pointer; }
+  button.secondary { background:#2b2f3a; color:var(--text); }
+  button:disabled { opacity:.5; cursor:default; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:10px; }
+  table { width:100%; border-collapse:collapse; margin-top:10px; font-size:13px; }
+  th, td { text-align:left; padding:5px 6px; border-bottom:1px solid var(--line); vertical-align:top; }
+  .ok { color:var(--ok); } .bad { color:var(--bad); }
+  .verdict { font-size:20px; font-weight:700; }
+  .muted { color:var(--muted); font-size:13px; }
+  .error { color:var(--bad); }
+  img { width:100%; border-radius:6px; margin-top:10px; }
+  .list button { width:100%; text-align:left; background:#23262f; color:var(--text); margin-bottom:6px; font-weight:400; }
+  textarea { width:100%; background:#111217; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:7px 8px; font:13px ui-monospace, monospace; }
+  section + section { margin-top:16px; }
+  audio { width:100%; margin-top:6px; }
+  nav a { color:var(--accent); margin-right:12px; font-size:13px; }
+</style>
+</head>
+<body>
+<header>
+  <nav><a href="/">Studio</a><a href="/continuity">Continuity</a><a href="/delivery">Delivery check</a><a href="/sound">Sound</a><a href="/prop-placement">Prop placement</a></nav>
+  <h1>Sound</h1>
+  <p>Voice lines on Grok Lite, stems with word times, one voice through different devices, music slid to the picture's hit, and an export to Resolve.</p>
+</header>
+<main>
+  <div>
+    <section>
+      <h2>1 · Voice line (Grok Lite, 480p)</h2>
+      <p class="muted" id="voiceGuide"></p>
+      <label for="vlTitle">Title</label><input id="vlTitle" placeholder="End card VO">
+      <label for="vlVoice">Voice (accent, age, character, delivery)</label><input id="vlVoice" placeholder="a deep, warm British male narrator, normal speed, with quiet emotion">
+      <label for="vlLines">Lines, one per line; optional time first, like “1.0 | Same moment.”</label><textarea id="vlLines" rows="4" placeholder="1.0 | Same moment.&#10;Everywhere.&#10;Your brand."></textarea>
+      <div class="row"><button id="vlCreate">Create voice-line scene</button><span class="muted" id="vlStatus"></span></div>
+      <p class="muted">Generating it is a normal take: open the scene in Studio, review the prompt and approve the take.</p>
+    </section>
+    <section>
+      <h2>2 · Save a stem</h2>
+      <label for="stSource">Finished take ID or full path of an audio file</label><input id="stSource" placeholder="job id, or /Users/you/Music/song.wav">
+      <label for="stName">Name</label><input id="stName" placeholder="Announcer take 1">
+      <div class="row"><button id="stSave">Save stem</button><span class="muted" id="stStatus"></span></div>
+    </section>
+    <section>
+      <h2>3 · Place pieces (one voice through each place's device)</h2>
+      <label for="plName">Name</label><input id="plName" placeholder="Broadcast placed">
+      <label for="plLength">Length (s)</label><input id="plLength" type="number" value="30" step="0.1">
+      <label for="plPieces">Pieces (JSON list): stem_id, from_s, to_s, at_s, device (clean, radio, tablet, tv, laptop, phone), gain_db, stretch_to_s</label>
+      <textarea id="plPieces" rows="6">[{"stem_id": "", "from_s": 0, "to_s": 4, "at_s": 0, "device": "radio"}]</textarea>
+      <div class="row"><button id="plBuild">Build stem</button><span class="muted" id="plStatus"></span></div>
+    </section>
+    <section>
+      <h2>4 · Fit music to the hit</h2>
+      <label for="muSong">Song stem ID</label><input id="muSong" placeholder="stem id">
+      <div class="row">
+        <label style="margin:0">Hit (s)</label><input id="muHit" type="number" step="0.01" value="15.5" style="width:100px">
+        <label style="margin:0">Length (s)</label><input id="muLength" type="number" step="0.1" value="30" style="width:100px">
+        <label style="margin:0">Song moment (s, optional)</label><input id="muEvent" type="number" step="0.01" style="width:110px">
+        <button class="secondary" id="muFit">Propose slides</button>
+      </div>
+      <table><thead><tr><th>Song moment</th><th>Kind</th><th>Slide</th><th>Silence head / tail</th><th></th></tr></thead><tbody id="muOptions"></tbody></table>
+      <label for="muKeys">Volume keyframes (JSON): straight lines in dB between points</label>
+      <textarea id="muKeys" rows="3">[{"at_s": 0, "db": -8}, {"at_s": 13, "db": -8}, {"at_s": 15.5, "db": 0}]</textarea>
+      <div class="row"><label style="margin:0">Slide (s)</label><input id="muOffset" type="number" step="0.01" value="0" style="width:110px">
+        <input id="muName" placeholder="Music stem name" style="flex:1"><button id="muWrite">Write music stem</button><span class="muted" id="muStatus"></span></div>
+    </section>
+    <section>
+      <h2>5 · Export to Resolve</h2>
+      <label for="rxTitle">Title</label><input id="rxTitle" placeholder="My ad sound v1">
+      <label for="rxVideo">Picture clips, one full path per line (optional; leave empty for sound only)</label><textarea id="rxVideo" rows="3"></textarea>
+      <label for="rxAudio">Stems on tracks (JSON): stem_id or path, track, at_s</label>
+      <textarea id="rxAudio" rows="4">[{"stem_id": "", "track": "Broadcast call", "at_s": 0}]</textarea>
+      <label for="rxFolder">Save in folder (optional full path)</label><input id="rxFolder">
+      <div class="row"><button id="rxExport">Export FCPXML and Lua</button><span class="muted" id="rxStatus"></span></div>
+    </section>
+  </div>
+  <section class="list">
+    <h2>Stems</h2>
+    <div id="stems" class="muted">Loading…</div>
+  </section>
+</main>
+<script src="/static/sound.js"></script>
+</body>
+</html>

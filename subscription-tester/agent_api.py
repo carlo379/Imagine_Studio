@@ -12,6 +12,7 @@ import time
 import uuid
 from pathlib import Path
 from urllib.parse import urlsplit, parse_qs
+import code_version
 from video_rules import MODELS, RATIOS, VOICES, image_input, MODEL_CAPABILITIES, reference_scene, prompt_size
 
 class APIError(ValueError):
@@ -365,6 +366,9 @@ class AgentAPI:
         if parts==['lessons','search'] and method=='POST':
             from workflow_tools import lessons
             return 200,lessons(self.app,data)
+        if len(parts)==3 and parts[0]=='assets' and parts[2]=='approve' and method=='POST':
+            from workflow_tools import approve_asset
+            return 200,approve_asset(self.app,parts[1],data,'agent_relay')
         if len(parts)==3 and parts[0]=='assets' and parts[2]=='annotations' and method=='POST':
             from workflow_tools import annotate
             return 200,annotate(self.app,parts[1],data)
@@ -389,8 +393,14 @@ class AgentAPI:
         if parts and parts[0]=='filmmaking':return self.app.filmmaking.dispatch(method,parts[1:],data,key)
         if parts and parts[0]=='creative':return self.app.creative.dispatch(method,parts[1:],data,key)
         if parts and parts[0]=='asset-studio':return self.app.asset_studio.dispatch(method,parts[1:],data,key)
+        if parts and parts[0]=='prop-models':return self.app.prop_models.dispatch(method,parts[1:],data,key)
         if parts and parts[0]=='precision':return self.app.precision.dispatch(method,parts[1:],data,key)
         if parts and parts[0]=='stories':return self.app.stories.dispatch(method,parts[1:],data,key)
+        if parts and parts[0]=='resolve':return self.app.resolve_export.dispatch(method,parts[1:],data,key)
+        if parts and parts[0]=='sound':return self.app.sound.dispatch(method,parts[1:],data,key)
+        if parts and parts[0]=='delivery':return self.app.delivery.dispatch(method,parts[1:],data,key)
+        if parts[:2]==['image-studio','prop-placement']:return self.app.prop_placement.dispatch(method,parts[2:],data,key)
+        if parts[:2]==['image-studio','continuity']:return self.app.continuity.dispatch(method,parts[2:],data,key)
         if parts and parts[0]=='image-studio':return self.app.images.dispatch(method,parts[1:],data,key)
         if parts and parts[0]=='prompting':return self.app.prompting.dispatch(method,parts[1:],data,key)
         if parts and parts[0]=='video-review':return self.app.video_review.dispatch(method,parts[1:],data,key)
@@ -410,11 +420,11 @@ class AgentAPI:
             record=self.create({'title':'Mock storyboard','scene':scene});self.db['demo_keys'][key]=record['id'];self.save(self.path,self.db)
             self.app.begin('login')
             return 201,record
-        if method=='GET' and not parts:return 200,{'version':'1','name':'Imagine Studio','schema':'/agent/v1/schema','approval_required':True}
+        if method=='GET' and not parts:return 200,{'version':'1','name':'Imagine Studio','schema':'/agent/v1/schema','approval_required':True,'code':code_version.status()}
         if method=='GET' and parts==['schema']:
             from agent_openapi import specification
             contract=specification()
-            return 200,{'version':'1','scene_defaults':blank(),'models':MODELS,'model_capabilities':MODEL_CAPABILITIES,'uploaded_audio':__import__('audio_references').capabilities(),'song_performance':self.app.song_performance.schema(),'ratios':RATIOS,'voices':VOICES,'config':self.config,
+            return 200,{'version':'1','code':code_version.status(),'scene_defaults':blank(),'models':MODELS,'model_capabilities':MODEL_CAPABILITIES,'uploaded_audio':__import__('audio_references').capabilities(),'song_performance':self.app.song_performance.schema(),'ratios':RATIOS,'voices':VOICES,'config':self.config,
                 'image_source':{'asset_id':'uploaded-id','alternative':{'url':'https://public.example/image.png'}},
                 'keyframe':'{id, source, slot}; slot is integer seconds × 3',
                 'project_archives':contract['paths']['/project-archives/import']['post']['x-archive-limits'],
@@ -496,7 +506,15 @@ class AgentAPI:
             if len(parts)==2:
                 if method=='GET':return 200,copy.deepcopy(record)
                 if method=='PUT':return 200,self.edit(identity,data)
-                if method=='PATCH':return 200,self.patch(identity,data)
+                if method=='PATCH':
+                    allowed={'expected_revision','title','changes','named_references','remove_named_references','restore_named_references'}
+                    unknown=sorted(set(data)-allowed)
+                    if unknown:
+                        # A misplaced body (e.g. {"scene": {...}}) must not bump the revision while changing nothing.
+                        raise APIError('invalid_scene','Unknown field'+('s' if len(unknown)>1 else '')+' '+', '.join(unknown)+'. PATCH accepts '
+                            + ', '.join(sorted(allowed))+'; put scene field edits inside "changes" (or use PUT with the whole "scene").')
+                    if not set(data)-{'expected_revision'}:raise APIError('invalid_scene','Nothing to change: send "changes", "title" or a named-reference list.')
+                    return 200,self.patch(identity,data)
             if len(parts)==3:
                 action=parts[2]
                 if action=='validate' and method=='POST':return 200,self.validation(record)
@@ -522,6 +540,19 @@ class AgentAPI:
                     plan_id=data.get('plan_id')
                     if plan_id is not None and not isinstance(plan_id,str):raise APIError('invalid_plan','plan_id must be a plan ID.')
                     if plan_id is None and data.get('approved') is not True:raise APIError('approval_required','Explicit human authorization and approved=true (or an approved plan_id) are required.',403)
+                    # The single human stop: approved=true with the human's own words approving this take.
+                    take_approval=None
+                    if 'human_words' in data:
+                        words=data['human_words']
+                        if data.get('approved') is not True:raise APIError('approval_required','human_words approve a take only together with approved=true.',403)
+                        if not isinstance(words,str) or not words.strip() or len(words)>2000:
+                            raise APIError('invalid_approval',"human_words must quote the human's own approval of this take, verbatim (1–2,000 characters).")
+                        take_approval=dict(human_words=words.strip(),approved_at=time.time(),source='agent_relay')
+                    verdict=data.get('verdict')
+                    if verdict is not None:
+                        if take_approval is None:raise APIError('approval_required','A verdict can ride along only with approved=true and human_words for the next take.',403)
+                        if not isinstance(verdict,dict) or not isinstance(verdict.get('job_id'),str):
+                            raise APIError('invalid_review','verdict must be {"job_id", "verdict", "human_words"?, "notes"?, "tags"?}.')
                     if not key or not re.fullmatch(r'[A-Za-z0-9_-]{8,100}',key):raise APIError('idempotency_required','Supply an 8–100 character Idempotency-Key.')
                     fingerprint=hashlib.sha256(json.dumps({'scene_id':identity,'revision':data.get('expected_revision'),'allow_unapproved_start_frame':data.get('allow_unapproved_start_frame',False),**({'plan_id':plan_id} if plan_id else {})},sort_keys=True).encode()).hexdigest()
                     previous=next((j for j in self.app.records() if j.get('agent_key')==key),None)
@@ -535,13 +566,23 @@ class AgentAPI:
                     readiness=self.app.shot_kit.readiness(record)
                     kit_state={k:readiness[k] for k in ('ready','has_last_frame','free_motion','has_keyframes','has_middle_frame')}
                     kit_state['missing']=readiness['missing']
-                    if plan_id:self.app.plans.authorize(plan_id,record)
+                    plan_warnings=self.app.plans.authorize(plan_id,record,take_approval=take_approval)['warnings'] if plan_id else []
                     settings=self.compile(record['scene'],data.get('allow_unapproved_start_frame',False),validate=False)
                     settings['_studio_video_id']=record['id']
                     if record.get('story_context'):settings['_studio_story']=copy.deepcopy(record['story_context'])
+                    if verdict is not None:
+                        # The verdict on the last take and the approval of the next one arrive in one step.
+                        review={k:v for k,v in verdict.items() if k!='job_id'}
+                        review.setdefault('human_words',take_approval['human_words'])
+                        previous_review=(next((j for j in self.app.records() if j['id']==verdict['job_id']),{}).get('human_review') or {})
+                        # A resent call (e.g. after a sign-in failure) must not fail on its own, already recorded verdict.
+                        already=previous_review.get('status')=='reviewed' and previous_review.get('verdict')==review.get('verdict') \
+                            and previous_review.get('human_words')==str(review.get('human_words','')).strip()
+                        if not already:self.app.record_human_review(verdict['job_id'],review,source='agent_relay')
                     identity=self.app.start_video(settings,True,agent_key=key,agent_fingerprint=fingerprint,agent_scene={'id':record['id'],'revision':record['revision']},
                         usage_before=data.get('usage_before_percent'),usage_unavailable=data.get('usage_reading_unavailable',False),
-                        plan={'id':plan_id,'item':record['id']} if plan_id else None,agent_identity=agent_identity,kit=kit_state)
+                        plan={'id':plan_id,'item':record['id'],**({'warnings':plan_warnings} if plan_warnings else {})} if plan_id else None,
+                        agent_identity=agent_identity,kit=kit_state,take_approval=take_approval)
                     return 202,next(j for j in self.app.records() if j['id']==identity)
         if parts==['jobs'] and method=='GET':return 200,self.app.records()
         if parts==['human-reviews'] and method=='GET':return 200,self.app.human_reviews()
@@ -572,6 +613,7 @@ class AgentAPI:
                     return 201,capture(self.app,job,data)
                 if parts[2]=='resume' and method=='POST':self.app.resume(job['id']);return 202,{'id':job['id']}
                 if parts[2]=='human-review' and method=='POST':return 200,self.app.record_human_review(job['id'],data,source='agent_relay')
+                if parts[2]=='keep' and method=='POST':return 200,self.app.keep_take(job['id'],data,source='agent_relay')
                 if parts[2]=='usage' and method=='POST':return 200,self.app.record_usage_after(job['id'],data)
                 if parts[2]=='review-packet' and method=='GET':return 200,self.app.director_review.packet(job['id'],base='/agent/v1')
                 if parts[2]=='ai-review' and method=='POST':return 200,self.app.director_review.submit(job['id'],data)
@@ -610,7 +652,7 @@ class AgentAPI:
             data={}
             if method not in ('GET',):
                 length=int(handler.headers.get('Content-Length','0'))
-                limit=(64*1024*1024*4//3+8192) if handler.path.endswith(('/editing/media','/audio-references')) else self.config['upload_limit_mb']*1024*1024*4//3+8192
+                limit=(64*1024*1024*4//3+8192) if handler.path.endswith(('/editing/media','/audio-references','/prop-models')) else self.config['upload_limit_mb']*1024*1024*4//3+8192
                 if not 0<length<=limit:raise APIError('body_limit','JSON body exceeds the local limit.',413)
                 data=json.loads(handler.rfile.read(length))
             path=handler.path.replace('/api/agent','/agent/v1',1) if browser else handler.path

@@ -158,6 +158,39 @@ def annotate(app,identity,data):
   asset.update(copy.deepcopy(data));app.agent.save(app.assets_path,app.assets)
  return copy.deepcopy(asset)
 
+def approve_asset(app,identity,data,source):
+ """Approve (or revoke approval of) any image asset: an upload, an edited frame or an Image Studio output.
+ source is 'browser' (the human clicked) or 'agent_relay' (an agent relays the human's own words, required)."""
+ from candidate_review import available,dependencies
+ allowed={'approved'}|({'human_words'} if source=='agent_relay' else set())
+ if not isinstance(data,dict) or set(data)-allowed:raise APIError('invalid_approval','Send '+' and '.join(sorted(allowed))+'.')
+ approved=data.get('approved',True)
+ if type(approved) is not bool:raise APIError('invalid_approval','approved must be true or false.')
+ words=None
+ if source=='agent_relay':
+  words=data.get('human_words')
+  if not isinstance(words,str) or not words.strip() or len(words)>2000:raise APIError('invalid_approval',"human_words must quote the human's own approval of this image, verbatim (1–2,000 characters).")
+  words=words.strip()
+ try:asset,_=app.asset(identity)
+ except ValueError:raise APIError('not_found','Image asset not found.',404)
+ if asset.get('kind') in ('prop_model_render','continuity_check'):raise APIError('not_for_video','Staging renders and continuity checks are never approved for video use.',409)
+ available(asset)
+ if not approved and dependencies(app,identity):raise APIError('reference_in_use','This image is still used by saved work. Replace those uses before removing approval.',409)
+ with app.lock:
+  asset=next(a for a in app.assets if a['id']==identity)
+  asset.update(approved=approved,review_state='approved' if approved else 'candidate',review_revision=asset.get('review_revision',0)+1)
+  if approved:asset['approval']=dict(source=source,approved_at=time.time(),**({'human_words':words} if words else {}))
+  else:asset.pop('approval',None)
+  app.agent.save(app.assets_path,app.assets)
+  result=copy.deepcopy(asset)
+ # Keep an Image Studio output of the same image in step with its asset.
+ images=getattr(app,'images',None);changed=False
+ for job in (images.db.get('jobs',[]) if images else []):
+  for output in job.get('outputs',[]):
+   if output.get('id')==identity:output.update(approved=approved,review_state=result['review_state'],review_revision=result['review_revision']);changed=True
+ if changed:images.persist()
+ return result
+
 def mirror(app,identity,data):
  import base64,subprocess,tempfile
  if set(data)-{'expected_shot_revision'}:raise APIError('invalid_mirror','Only expected_shot_revision is accepted for a take.')

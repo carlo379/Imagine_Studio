@@ -3,6 +3,7 @@
   "prompt_limit_chars": 4096,
   "poll_interval_seconds": 5,
   "poll_timeout_seconds": 600,
+  "poll_not_found_grace_seconds": 90,
   "live_generations_enabled": true,
   "human_review_after_agent_video": true,
   "assistant_grok_model": "grok-4.7",

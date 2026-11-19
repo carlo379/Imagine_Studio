@@ -199,3 +199,41 @@ update does not add a layout selector or change an approved sheet. Preserve the
 project's art style, attach the base identity for variants, and keep different
 ages/costumes clearly labeled. Correct a flawed starting still before spending
 video generation allowance.
+
+## Continuity check: fixed objects between a first and last frame
+
+A video shot moves between its first and last frames. People and other moving things should change; fixed things (the set, furniture, props such as a satellite dish, and the camera) must not. When a fixed object sits in a different place in the last frame, the video model has to move it, and it often morphs.
+
+Open **/continuity** in the Studio browser tab (for example `http://127.0.0.1:8765/continuity`), enter the two frames' asset IDs, drag a box around each fixed object on the first frame and name it, then choose **Run check**. Each box is searched for in the last frame:
+
+| Status | Meaning |
+| --- | --- |
+| held | Found in the same place (within the tolerance, 0.5% of the width by default) and still matching. |
+| moved | Still matching, but displaced beyond the tolerance. A fixed object moved, or the camera moved. |
+| changed | No longer matches nearby: it morphed, was replaced or is covered by a person. Look at the overlay to tell which. |
+| resized | Found and matching, but at a different size (more than 0.5% off by default): an edit shrank or grew a fixed object. |
+| flat | Too little texture to measure (plain sky or walls). Not judged. |
+
+The verdict is **pass** when every box held. Without boxes, a tile grid gives **pass**, **review** (some areas changed; check they are only people) or **fail** (areas moved). The result shows a map (red moved, amber changed), a 50% overlay and a difference image; they are review aids that Studio never sends to the video model. When a check does not pass but the change is acceptable (a person covering the object), accept it in your own words.
+
+Agents use `POST image-studio/continuity` with `first`, `last`, optional `regions` (`[{"name": "dish", "box": [x0, y0, x1, y1]}]`, fractions of the frame) and `tolerance_percent`, or `StudioClient.check_continuity(first_id, last_id, regions=...)`, and relay the human's acceptance with `POST image-studio/continuity/{id}/accept` and `human_words`. A shot kit counts its last frame as consistent with the first when `continuity_check_id` names a passed or accepted check of exactly those two frames, as an alternative to `last_frame_from_first`.
+
+**Size.** Each box is also measured for size; the result shows it as a percent (100% is the same size). Draw each box around the whole object, edges included: a flat area inside an object cannot show its size. A laptop about 9% smaller in an end frame passed the old place-only check; it now fails as resized.
+
+**Lock fixed objects.** When an edit has moved or resized a fixed object, choose **Copy fixed objects into last frame**: Studio copies the first frame's own pixels of each box into the last frame with a soft edge and saves a new image. Then make a Grok edit of it with "Reproduce the input image exactly. Change nothing." to blend the copied areas, run the check again and approve it. Agents use `POST image-studio/continuity/lock` or `StudioClient.lock_fixed_objects(...)`.
+
+## Prop placement: a real product at its true size
+
+Image models often draw a real product (a satellite dish, a phone, a car) at the wrong size or shape, and a long prompt describing it makes it worse. The method that works:
+
+1. Render the official 3D model with the prop model tool at the size, position and angle it should have in the frame.
+2. A GPT Image edit of the draft still, with the render given as a **separate reference** (not pasted in): "replace the wrong dish with the product in the second image, same position, size and angle; change nothing else". GPT follows a separate product reference well.
+3. A Grok edit with that GPT image as the only reference and a minimal prompt: "Reproduce the input image exactly. Change nothing." Grok copies it faithfully, in its own texture.
+
+Open **/prop-placement** (or **Tools → Prop placement**), give the draft still, the render, what to replace and the product, approve the two image generations and start; the page moves to step 2 by itself and shows both images. Agents use `POST image-studio/prop-placement` and `.../advance`, or `StudioClient.place_prop(...)`.
+
+For an end frame whose camera matches its start frame, use the approved start frame as the reference instead of a render: the product then keeps its position, tilt and mount.
+
+What fails, so avoid it: a second, conflicting product reference given to Grok (it copies the first image and ignores the second); Grok edits of small, distant products (they drift into other shapes); size requests like "x% shorter" to Grok (ignored); pasting the render into the image (it looks pasted, and covering an old object leaves ghost edges). After three failed tries, change the method, not the prompt.
+
+A size request in an image edit ("20% smaller", "make the dish shorter") no longer gets Studio's "preserve proportions" line, which fought the request.

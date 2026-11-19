@@ -11,8 +11,8 @@ model and gives it only the review packet. Studio enforces what it can:
 - a review must come from the chosen reviewer model in a different session from the
   director's, must say how many frames it examined, and is refused when malformed;
 - code, not the reviewer, turns the scores and issues into a suggestion;
-- when a reviewer is configured, a relayed human verdict waits for the AI review
-  (or a recorded reason it could not run), so the review cannot be skipped silently;
+- the AI review is optional: the human's verdict alone is enough, and a review sent
+  later is still compared with it;
 - every suggestion is compared with the human's verdict to measure agreement.
 
 Model and session names are declared by the caller and cannot be verified, as with
@@ -177,7 +177,8 @@ class DirectorReview:
             try:
                 view=self.app.plans.view(job['plan']['id'])
                 plan_item=next((dict(plan=view['title'],shot=i['label']) for i in view['items'] if i['scene_id']==job['plan']['item']),None)
-            except APIError:plan_item=None
+            except APIError:
+                plan_item=None
         scene=next((r for r in self.app.agent.db['scenes'] if r['id']==(job.get('agent_scene') or {}).get('id')),None)
         frames=self.frames(job) if job.get('status')=='done' else []
         prefix=f'{base}/jobs/{job["id"]}/review-frames/'
@@ -259,11 +260,6 @@ class DirectorReview:
             job['ai_review']=record
             self.app.save_history()
             return copy.deepcopy(job)
-
-    def required_before_verdict(self, job):
-        """When the human chose a reviewer, a relayed verdict on an agent take waits for the AI review."""
-        # Called while the caller holds app.lock, which is not re-entrant: read without locking.
-        return bool(self.roles.get('reviewer')) and bool(job.get('agent_key')) and not job.get('ai_review')
 
     # ----- agreement between the reviewer and the human -----
     def agreement(self):

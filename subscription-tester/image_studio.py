@@ -24,6 +24,8 @@ IMAGE_MODELS = {
     **{m: dict(label='OpenAI Image 2.5 '+('Flare' if m.endswith('flare') else 'Sunburst')+' · API', provider='openai', billing='OpenAI API billing', ratios=OPENAI_RATIOS, resolutions=list(openai_images.SIZES), qualities=list(openai_images.QUALITIES), counts=[1,2,4]) for m in openai_images.API_MODELS}}
 
 
+RESIZE_REQUEST=re.compile(r'\b(smaller|larger|bigger|shorter|taller|wider|narrower|thinner|resize[sd]?|rescale|shrink|enlarge|\d+(?:\.\d+)?\s*%\s*(?:smaller|larger|bigger|shorter|taller|wider|narrower))\b',re.I)
+
 def source_limit(model):
     # The installed native Codex tool validates referenced_image_paths at five.
     # Its subscription transport does not inherit the HTTP API's 16-image cap.
@@ -232,8 +234,10 @@ class ImageStudio:
         for source in s['extras']:
             sources.append(source);context.append('Input image '+str(len(sources))+' is an additional scene reference.')
         if len(sources)>source_limit(s['model']): raise APIError('source_limit','Use at most '+('five' if source_limit(s['model'])==5 else '16')+' source images total, including the image being refined. Deselect extra views.')
-        if context: prompt+='\n\nVisual references:\n'+'\n'.join(context)+'\nPreserve the supplied asset identities, proportions, materials and defining details. Follow the scene instructions without redesigning these assets.'
-        if s['model'] != IMAGE_MODEL and s['ratio']!='auto': prompt+='\nRequested output canvas: '+s['ratio']+'. Preserve the described framing and subject scale; do not zoom or crop merely to achieve the canvas shape.'
+        # A size request ("20% smaller", "make the dish shorter") must not be fought by a "preserve proportions/scale" line.
+        resizing=bool(RESIZE_REQUEST.search(s['prompt'] or ''))
+        if context: prompt+='\n\nVisual references:\n'+'\n'.join(context)+('\nPreserve the supplied asset identities, materials and defining details; change their size only as the scene instructions ask.' if resizing else '\nPreserve the supplied asset identities, proportions, materials and defining details. Follow the scene instructions without redesigning these assets.')
+        if s['model'] != IMAGE_MODEL and s['ratio']!='auto': prompt+='\nRequested output canvas: '+s['ratio']+('. Preserve the described framing; do not zoom or crop merely to achieve the canvas shape.' if resizing else '. Preserve the described framing and subject scale; do not zoom or crop merely to achieve the canvas shape.')
         limit=self.prompt_limit(s['model'])
         if len(prompt)>limit: raise APIError('prompt_limit',f"Expanded image prompt has {len(prompt):,} characters including asset descriptions and composition guidance; {s['model']} allows {limit:,} in this app. Your draft is preserved. Shorten the scene or reference descriptions.")
         return prompt,sources
@@ -405,6 +409,13 @@ class ImageStudio:
             from provider_usage import observe
             observe(self.app,result,'grok_image')
             recovery = 'Resume the saved request. Do not submit a duplicate.'
+            # xAI can answer 404 for a just-accepted deferred request before it is registered.
+            # Treat 404 as "still starting" during a short grace window after submission; never resubmit.
+            grace = self.config.get('poll_not_found_grace_seconds', 90)
+            if result.status_code == 404 and time.time() - job.get('created_at', 0) < grace:
+                job['not_found_polls'] = job.get('not_found_polls', 0) + 1
+                time.sleep(self.config.get('poll_interval_seconds',5))
+                continue
             if result.status_code == 404:
                 job['recoverable'] = False
                 raise ProviderResponseError('The saved Grok image request is no longer available', result, secrets,

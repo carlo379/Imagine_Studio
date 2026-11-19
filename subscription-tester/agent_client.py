@@ -3,7 +3,9 @@ import argparse
 import base64
 import json
 import os
+import re
 import time
+import warnings
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.parse import urlsplit, urlencode
@@ -11,6 +13,9 @@ from urllib.request import Request, HTTPRedirectHandler, ProxyHandler, build_ope
 
 from user_data import data_home
 ROOT=Path(__file__).resolve().parent
+
+class StaleServerWarning(UserWarning):
+    """The Studio server was started before the code on disk last changed."""
 
 class AgentError(RuntimeError):
     def __init__(self,status,code,message):
@@ -31,6 +36,8 @@ class StudioClient(SongClient):
         self.base=base_url.rstrip('/')+'/agent/v1'
         self.token=Path(token_file or data_home()/'studio/agent-token').expanduser().read_text().strip()
         self.opener=build_opener(ProxyHandler({}), LocalOnlyRedirects())
+        self._resumed={}  # job id -> (resume_count expected, when resumed)
+        self._code_checked=False
 
     def request(self,path='',method='GET',data=None,idempotency_key=None,*,params=None,timeout=30):
         if not isinstance(path,str) or '?' in path or '#' in path or '..' in path or '://' in path:
@@ -38,6 +45,11 @@ class StudioClient(SongClient):
         if params is not None:
             if method!='GET' or not isinstance(params,dict) or any(not isinstance(k,str) or not isinstance(v,str) for k,v in params.items()):raise ValueError('Use string query parameters on GET requests.')
             path+='?'+urlencode(params) if params else ''
+        resume=re.fullmatch(r'/?jobs/([A-Za-z0-9_-]+)/resume',path) if method=='POST' else None
+        if resume:
+            # Remember the resume so wait_for_job does not return the job's old error state.
+            try:count=(self.request('jobs/'+resume[1]) or {}).get('resume_count',0)
+            except AgentError:count=0
         headers={'Authorization':'Bearer '+self.token}
         if data is not None:headers['Content-Type']='application/json'
         if idempotency_key:headers['Idempotency-Key']=idempotency_key
@@ -45,6 +57,7 @@ class StudioClient(SongClient):
         try:
             with self.opener.open(req,timeout=timeout) as response:
                 raw=response.read()
+                if resume:self._resumed[resume[1]]=(count+1,time.monotonic())
                 return json.loads(raw) if response.headers.get_content_type()=='application/json' else raw
         except HTTPError as e:
             try:detail=json.loads(e.read()).get('error',{})
@@ -100,6 +113,89 @@ class StudioClient(SongClient):
         else:raise ValueError('Use a JPEG, PNG or WebP image.')
         return self.request('assets','POST',{'name':path.name,'data_url':'data:'+mime+';base64,'+base64.b64encode(raw).decode()})
 
+    def upload_prop_model(self,path,*,name=None,units='mm',up_axis='z',reference_id=None):
+        """Upload an STL or OBJ prop model; its true size comes from units."""
+        path=Path(path);kind=path.suffix.lower().lstrip('.')
+        body=dict(name=name or path.stem,format=kind,units=units,up_axis=up_axis,data_base64=base64.b64encode(path.read_bytes()).decode())
+        if reference_id:body['reference_id']=reference_id
+        return self.request('prop-models','POST',body)
+
+    def render_prop(self,model_id,**pose):
+        """Render a prop model at an exact frame position, distance, angle and lens (see prop-models/schema).
+        The saved image asset is an image-model reference only; Studio refuses it as a video input."""
+        return self.request('prop-models/'+model_id+'/render','POST',pose)
+
+    def check_continuity(self,first_asset_id,last_asset_id,*,regions=None,tolerance_percent=0.5,title=None):
+        """Compare a shot's first and last frames for fixed objects that moved or changed.
+        regions: [{"name": "dish", "box": [x0, y0, x1, y1]}] as fractions of the frame."""
+        body=dict(first={'asset_id':first_asset_id},last={'asset_id':last_asset_id},tolerance_percent=tolerance_percent)
+        if regions:body['regions']=regions
+        if title:body['title']=title
+        return self.request('image-studio/continuity','POST',body)
+
+    def lock_fixed_objects(self,first_asset_id,last_asset_id,regions,*,feather_px=12,name=None):
+        """New last frame whose fixed objects are the first frame's own pixels (boxes or polygons)."""
+        body=dict(first={'asset_id':first_asset_id},last={'asset_id':last_asset_id},regions=regions,feather_px=feather_px)
+        if name:body['name']=name
+        return self.request('image-studio/continuity/lock','POST',body)
+
+    def keep_take(self,job_id,human_words):
+        """The human keeps a take already judged retry or reject ("let's keep the first one")."""
+        return self.request('jobs/'+job_id+'/keep','POST',{'human_words':human_words})
+
+    def check_delivery(self,path,*,preset=None,spec=None,title=None):
+        """Check a finished local video against a spec preset (contest_30s_1080p, x, youtube) or a custom spec."""
+        body={'path':str(Path(path).expanduser().resolve())}
+        for name,value in (('preset',preset),('spec',spec),('title',title)):
+            if value is not None:body[name]=value
+        return self.request('delivery/checks','POST',body,timeout=900)
+
+    def fix_delivery(self,check_id,*,output_path=None,loudness=None):
+        """Copy the picture untouched and re-encode only the sound to the spec; returns a check of the new file."""
+        body={}
+        if output_path:body['output_path']=str(Path(output_path).expanduser().resolve())
+        if loudness is not None:body['loudness']=loudness
+        return self.request('delivery/checks/'+check_id+'/fix','POST',body,timeout=900)
+
+    def create_voice_line(self,title,voice,lines,**extra):
+        """A Lite 480p scene for spoken lines only; lines are [{"text", "at_s"?, "delivery"?}]."""
+        return self.request('sound/voice-lines','POST',dict(title=title,voice=voice,lines=lines,**extra))
+
+    def save_stem(self,*,job_id=None,path=None,name=None,words=True):
+        """Save a take's sound (job_id) or a local audio file (path) as a WAV stem with word times."""
+        body={'words':words,**({'job_id':job_id} if job_id else {'path':str(Path(path).expanduser().resolve())})}
+        if name:body['name']=name
+        return self.request('sound/stems','POST',body,timeout=600)
+
+    def place_stems(self,name,length_s,pieces):
+        """Build a full-length stem from pieces placed at timeline times, with device presets."""
+        return self.request('sound/place','POST',dict(name=name,length_s=length_s,pieces=pieces),timeout=600)
+
+    def music_fit(self,hit_s,length_s,*,stem_id=None,path=None,song_event_s=None):
+        body=dict(hit_s=hit_s,length_s=length_s,**({'stem_id':stem_id} if stem_id else {'path':str(Path(path).expanduser().resolve())}))
+        if song_event_s is not None:body['song_event_s']=song_event_s
+        return self.request('sound/music-fit','POST',body,timeout=300)
+
+    def write_music(self,name,length_s,*,offset_s=0,keyframes=None,stem_id=None,path=None,fade_out_s=0):
+        """The song slid by offset_s, trimmed to length, with volume keyframes [{"at_s", "db"}]."""
+        body=dict(name=name,length_s=length_s,offset_s=offset_s,keyframes=keyframes or [],fade_out_s=fade_out_s,
+                  **({'stem_id':stem_id} if stem_id else {'path':str(Path(path).expanduser().resolve())}))
+        return self.request('sound/music','POST',body,timeout=600)
+
+    def export_to_resolve(self,*,title=None,timeline_id=None,video=None,audio=None,fps=None,output_folder=None):
+        """FCPXML (File > Import > Timeline in Resolve) plus a Lua script that adds the stems as named tracks."""
+        body={}
+        for name,value in (('title',title),('timeline_id',timeline_id),('video',video),('audio',audio),('fps',fps),('output_folder',output_folder)):
+            if value is not None:body[name]=value
+        return self.request('resolve/exports','POST',body,timeout=300)
+
+    def place_prop(self,title,base_asset_id,reference_asset_id,target,product,*,approved=False,**extra):
+        """Two image steps: GPT placement with the render as a separate reference, then Grok "reproduce exactly"."""
+        return self.request('image-studio/prop-placement','POST',dict(title=title,base={'asset_id':base_asset_id},
+            reference={'asset_id':reference_asset_id},target=target,product=product,approved=approved,**extra))
+
+    def advance_prop_placement(self,run_id):return self.request('image-studio/prop-placement/'+run_id+'/advance','POST',{})
+
     def browser_tabs(self):return self.request('handoff/tabs')
     def request_browser(self,tab,kind,payload):
         return self.request('handoff/tabs/'+tab['id']+'/requests','POST',dict(expected_revision=tab['revision'],kind=kind,payload=payload))
@@ -139,8 +235,32 @@ class StudioClient(SongClient):
 
     def validate(self,record):return self.request('scenes/'+record['id']+'/validate','POST',{})
 
-    def generate(self,record,*,approved=False,idempotency_key):
-        return self.request('scenes/'+record['id']+'/generate','POST',{'approved':approved,'expected_revision':record['revision']},idempotency_key)
+    def check_server_code(self):
+        """Return the server's code status ({'running', 'on_disk', 'stale', 'message'}) and warn
+        (StaleServerWarning) when the server runs older code than the files on disk."""
+        self._code_checked=True
+        status=(self.request('') or {}).get('code')
+        if status is None:
+            status={'stale':None,'message':'This server does not report its code version: it predates the check. Restart it.'}
+        if status.get('stale') is not False:warnings.warn(status['message'],StaleServerWarning,stacklevel=2)
+        return status
+
+    def generate(self,record,*,approved=False,idempotency_key,human_words=None,verdict=None,plan_id=None,agent=None,**extra):
+        """Generate one take. The single human stop: approved=True with human_words, the human's
+        own approval of this take, verbatim. It also covers the attached frames, scene edits since
+        a plan was approved and the plan's take/budget limits, and lifts the review pause; pass
+        verdict={'job_id', 'verdict', 'notes'?, 'tags'?} to record the last take's verdict in the same call."""
+        body={'approved':approved,'expected_revision':record['revision'],**extra}
+        for name,value in (('human_words',human_words),('verdict',verdict),('plan_id',plan_id),('agent',agent)):
+            if value is not None:body[name]=value
+        if not self._code_checked:
+            try:self.check_server_code()
+            except AgentError:pass
+        return self.request('scenes/'+record['id']+'/generate','POST',body,idempotency_key)
+
+    def approve_asset(self,asset_id,human_words,*,approved=True):
+        """Mark any image asset (an upload, a locally edited frame) approved, relaying the human's own words."""
+        return self.request('assets/'+asset_id+'/approve','POST',{'approved':approved,'human_words':human_words})
 
     def show_in_browser(self,record):return self.request('workspace','POST',{'scene_id':record['id']})
 
@@ -335,11 +455,23 @@ class StudioClient(SongClient):
             if time.monotonic()>=deadline:raise TimeoutError('Image polling timed out. Check this job; do not resubmit.')
             time.sleep(interval)
 
-    def wait_for_job(self,identity,timeout=600,interval=2):
+    def resume_job(self,identity):
+        """Resume polling a saved request (never resubmits); follow with wait_for_job."""
+        return self.request('jobs/'+identity+'/resume','POST',{})
+
+    def wait_for_job(self,identity,timeout=600,interval=2,stale_grace=30):
+        """Poll until the job leaves pending. Right after jobs/{id}/resume, an error state from
+        before the resume is stale: keep waiting (up to stale_grace seconds) until the server
+        shows the resumed attempt."""
         deadline=time.monotonic()+timeout
         while True:
             job=self.request('jobs/'+identity)
-            if job['status']!='pending':return job
+            expected=self._resumed.get(identity)
+            if expected and job['status']!='pending' and job.get('resume_count',0)<expected[0] \
+                    and time.monotonic()-expected[1]<stale_grace and time.monotonic()<deadline:
+                time.sleep(interval);continue
+            if job['status']!='pending':
+                self._resumed.pop(identity,None);return job
             if time.monotonic()>=deadline:raise TimeoutError('Polling timed out. Fetch this job or resume it; do not resubmit.')
             time.sleep(interval)
 

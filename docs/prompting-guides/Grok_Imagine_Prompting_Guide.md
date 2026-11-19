@@ -68,6 +68,16 @@ Use these inside the 7 blocks.
 - **Limits (full Video 1.5 reference workflow; check the runtime schema first):** up to 14 images, 3 preset voices, 4 internal pinned frames, 15 seconds, 720p (1080p for text and image workflows). Lite differs. Report unsupported inputs instead of dropping them. Interior keyframes sit on a one-third-second grid strictly inside the duration (slot = seconds x 3); keep timestamps out of the prose. A reference image alone does not enforce a transition time.
 - **Review takes** for faces, wardrobe, lighting and screen direction, then finish sound balance, music and color in the edit. Generated sound is not uploaded-audio conditioning.
 
+## Lessons from finished productions
+From a 30-second ad (five 8-second shots and two voice takes, about 2.4 takes per kept shot).
+- **Fill the first seconds.** A take with nothing happening for 6 seconds was rejected. Act out tension with physical tells (fidgeting, gripping, leaning in), keep the build-up short, then make the payoff immediate.
+- **Say "real-time speed, never slow motion"** for celebrations and fast action; cheers otherwise came out in slow motion.
+- **Ask for small ambient motion** (waves moving, clouds drifting, trees swaying, lights flickering) or the world looks frozen. Also say "no new clouds"; Grok invented one.
+- **Things vanish:** a hat and a mug disappeared mid-shot. Give each loose object an action or a hold ("he throws his hat up", "the mug stays on the table").
+- **Don't ask for a camera move and a precise motion path together** (a pan while a satellite arc crosses the sky came out random). Lock the camera, draw the path into the first and last frames, and do the pan in the edit.
+- **A wrong end state needs a new last frame, not new words.** Jumping characters were fixed by an end frame where they hug instead.
+- **Lite voices (audio only):** Lite has no preset voices. Describe accent, age and character ("a deep, warm British male narrator"); pitch words alone ("deeper") did not change the voice. Ask for normal speed with emotion; a slower read sounded flat. Lite at 480p costs about a quarter of full Video 1.5, so use it when only the sound is kept.
+
 ## Camera snippets
 - Setup/establishing: static, locked-off, no movement.
 - Action handheld (article's go-to): "Unstabilized handheld combat camera POV, violent jagged shake, the camera swinging, rolling and tilting wildly, the horizon tipping off-level with every stride, hard vertical bounces, sudden sideways whips, lurching drops and jolts, focus hunting and snapping, the frame barely holding the chaos. Chaotic, never aligned, never smooth, like a camera held by someone crouching inside a shadowed threshold tracking urgent movement. Fast, urgent, real-time speed, no slow motion." Adapt to the scene.

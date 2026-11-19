@@ -15,7 +15,7 @@ DISPATCHERS={
     'series_builder.py':('filmmaking','dispatch'), 'world_workshop.py':('filmmaking','dispatch'),
     'creative_studio.py':('creative','dispatch'), 'asset_studio.py':('asset-studio','dispatch'),
     'precision_studio.py':('precision','dispatch'), 'story_studio.py':('stories','dispatch'),
-    'image_studio.py':('image-studio','dispatch'),
+    'image_studio.py':('image-studio','dispatch'), 'prop_models.py':('prop-models','dispatch'), 'frame_continuity.py':('image-studio/continuity','dispatch'), 'delivery_check.py':('delivery','dispatch'), 'sound_tools.py':('sound','dispatch'), 'resolve_export.py':('resolve','dispatch'), 'prop_placement.py':('image-studio/prop-placement','dispatch'),
     'opening_frame.py':('filmmaking','dispatch'), 'video_direction.py':('filmmaking','dispatch'), 'workspace_accounts.py':('studio-account','dispatch'),
     'media_prompting.py':('prompting','dispatch'),
     'browser_handoff.py':('handoff','dispatch'),

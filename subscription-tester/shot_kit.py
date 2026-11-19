@@ -25,7 +25,7 @@ import time
 
 from agent_api import APIError
 
-FIELDS=('camera','action','end_state','free_motion','staging_asset_id','last_frame_from_first','complex_action','middle_frame_from_first')
+FIELDS=('camera','action','end_state','free_motion','staging_asset_id','last_frame_from_first','complex_action','middle_frame_from_first','continuity_check_id')
 # Words and shapes that suggest several beats in one shot; used only for a visible hint.
 SEQUENCE=re.compile(r'\b(then|after|before|while|until|meanwhile|finally|next|as soon as|turns? and|and then)\b',re.I)
 
@@ -79,6 +79,10 @@ class ShotKit:
             if key in data:
                 if type(data[key]) is not bool:raise APIError('invalid_kit',f'{key} must be true or false.')
                 kit[key]=data[key]
+        if 'continuity_check_id' in data:
+            value=data['continuity_check_id']
+            if value is not None:self.app.continuity.get(value)
+            kit['continuity_check_id']=value
         if 'staging_asset_id' in data:
             value=data['staging_asset_id']
             if value is not None and not self._asset(value):raise APIError('invalid_kit','staging_asset_id must name an uploaded staging render.')
@@ -90,6 +94,23 @@ class ShotKit:
         record.update(kit=kit,revision=record['revision']+1,updated_at=time.time())
         self.app.agent.save(self.app.agent.path,self.app.agent.db)
         return self.view(scene_id)
+
+    def _consistent(self, kit, first, last):
+        """Fixed objects must not move between the first and last frames. Either the last frame
+        was made by editing the first, or a continuity check of these exact frames passed or
+        was accepted by the human."""
+        if kit.get('last_frame_from_first') is True:return True,None
+        check=None
+        if kit.get('continuity_check_id'):
+            try:check=self.app.continuity.get(kit['continuity_check_id'])
+            except APIError:check=None
+        if check and (check['first'],check['last'])!=(first,last):
+            return False,'The continuity check compares other frames; run it again on the current first and last frames.'
+        if check and (check['verdict']=='pass' or check.get('accepted')):return True,None
+        if check:
+            return False,f"Continuity check {check['verdict']}: "+'; '.join(check.get('reasons') or [])+' Fix the last frame, or relay the human accepting the check.'
+        return False,('Make the last frame by editing the approved first frame and set last_frame_from_first, or run a continuity check '
+                      '(POST image-studio/continuity) on the two frames and set continuity_check_id.')
 
     # ----- readiness -----
     def readiness(self, record):
@@ -112,8 +133,8 @@ class ShotKit:
             usable,why=self._usable(last) if last else (False,'missing')
             check('last_frame','Last frame attached and approved (shot has an end state)',usable,
                   f'Last frame is {why}: generate the end state from the first frame, then approve it.')
-            check('last_from_first','Last frame made from the first frame',kit.get('last_frame_from_first') is True,
-                  'Make the last frame by editing the approved first frame, so they stay consistent, and set last_frame_from_first.')
+            consistent,how=self._consistent(kit,first,last)
+            check('last_from_first','Last frame consistent with the first frame',consistent,how)
         check('complexity','Complex action decided',isinstance(kit.get('complex_action'),bool),
               'Decide whether the action is complex (several beats, a turn and a reach, a fall): set complex_action true or false.')
         duration=scene.get('duration') or 0

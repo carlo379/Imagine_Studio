@@ -121,13 +121,16 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(reviews[0]['scene_id'],scene['id']);self.assertEqual(reviews[0]['usage_after_percent'],4)
         self.assertEqual(reviews[1]['human_words'],'No. The tavern looks fake, try a different angle.')
         self.assertEqual(self.app.human_reviews(),reviews)
-    def test_agent_must_ask_for_usage_readings_until_calibrated(self):
+    def test_usage_readings_are_optional_while_costs_are_learned(self):
         import usage_calibration
         self.reference();self.app.update(signed_in=True);scene=self.scene()
         route=f"scenes/{scene['id']}/generate"
         with patch.object(self.app,'mock',False),patch.object(self.app,'spawn'):
-            with self.assertRaises(APIError) as error:self.call('POST',route,{'expected_revision':scene['revision'],'approved':True},'usage-needed-1')
-            self.assertEqual(error.exception.code,'usage_reading_required');self.assertIn('Settings → Usage',str(error.exception))
+            self.assertTrue(usage_calibration.required(self.app.records(),'480p'))
+            # Still learning costs, yet a take without a reading is never blocked.
+            unread=self.call('POST',route,{'expected_revision':scene['revision'],'approved':True},'usage-needed-1')
+            self.assertIsNone(unread['usage']['before'])
+            self.app.history=[j for j in self.app.history if j['id']!=unread['id']];self.app.update(phase='done')
             with self.assertRaises(ValueError):self.call('POST',route,{'expected_revision':scene['revision'],'approved':True,'usage_before_percent':150},'usage-needed-2')
             job=self.call('POST',route,{'expected_revision':scene['revision'],'approved':True,'usage_before_percent':12.5},'usage-needed-3')
             self.assertEqual(job['usage'],{'before':12.5,'after':None,'unavailable':False})
@@ -143,14 +146,17 @@ class AgentTests(unittest.TestCase):
             third=self.scene()
             job=self.call('POST',f"scenes/{third['id']}/generate",{'expected_revision':third['revision'],'approved':True,'usage_reading_unavailable':True},'usage-unavailable-1')
             self.assertTrue(job['usage']['unavailable'])
-    def test_relayed_verdict_needs_the_after_reading_and_browser_records_it_separately(self):
+    def test_relayed_verdict_takes_an_optional_after_reading_and_browser_records_it_separately(self):
         self.reference();self.app.update(signed_in=True);scene=self.scene()
         with patch('httpx.Client'):
+            other=self.scene()
+            skipped=self.call('POST',f"scenes/{other['id']}/generate",{'expected_revision':other['revision'],'approved':True,'usage_before_percent':19},'usage-relay-0')
+            self.wait_job(skipped['id'])
+            # A before reading never makes the after reading mandatory.
+            self.assertEqual(self.call('POST',f"jobs/{skipped['id']}/human-review",{'verdict':'keep','human_words':'Keep it.'})['usage']['after'],None)
             job=self.call('POST',f"scenes/{scene['id']}/generate",{'expected_revision':scene['revision'],'approved':True,'usage_before_percent':20},'usage-relay-1')
             self.wait_job(job['id'])
             route=f"jobs/{job['id']}/human-review"
-            with self.assertRaises(APIError) as error:self.call('POST',route,{'verdict':'keep','human_words':'Keep it.'})
-            self.assertEqual(error.exception.code,'usage_reading_required')
             reviewed=self.call('POST',route,{'verdict':'keep','human_words':'Keep it.','usage_after_percent':21.5})
             self.assertEqual(reviewed['usage']['after'],21.5);self.assertIsNotNone(reviewed['usage']['after_at'])
             row=self.call('GET','human-reviews')[0]
